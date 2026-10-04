@@ -5,7 +5,7 @@ import { HashRouter, Route, Routes } from "react-router-dom";
 
 import { initI18n } from "@/renderer/helpers/i18n/i18n";
 import { updateAppLanguage } from "@/renderer/helpers/i18n/language-helpers";
-import { syncThemeWithLocal } from "@/renderer/helpers/theme/theme-helper";
+import { applyStoredThemeClass, syncThemeWithLocal } from "@/renderer/helpers/theme/theme-helper";
 import { ScrollToTop } from "@/renderer/components/scroll-to-top";
 import SidebarLayout from "@/renderer/layouts/sidebar-layout";
 import { BugsPage } from "@/renderer/pages/bugs-page";
@@ -47,6 +47,7 @@ export default function App() {
 }
 
 void initI18n();
+applyStoredThemeClass();
 
 const root = createRoot(document.getElementById("app"));
 root.render(<App />);

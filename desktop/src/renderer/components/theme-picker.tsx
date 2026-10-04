@@ -15,13 +15,13 @@ interface ThemePickerProps {
 }
 
 export function ThemePicker({ isIconFormat = false, className }: ThemePickerProps) {
-  const [currentTheme, setCurrentTheme] = useState<Theme>("system");
+  const [currentTheme, setCurrentTheme] = useState<Theme>("dark");
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const initTheme = async () => {
       const themePreferences = await getCurrentTheme();
-      if (themePreferences) {
+      if (themePreferences.local) {
         setCurrentTheme(themePreferences.local);
       }
     };

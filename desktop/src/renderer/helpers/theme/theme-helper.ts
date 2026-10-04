@@ -45,10 +45,20 @@ export async function toggleTheme() {
   localStorage.setItem(THEME_KEY, newTheme);
 }
 
+/** Paint dark immediately, then honor a saved light or system choice. */
+export function applyStoredThemeClass() {
+  const stored = localStorage.getItem(THEME_KEY);
+  const theme: Theme = stored === "light" || stored === "system" ? stored : "dark";
+  const isDark =
+    theme === "dark" ||
+    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  updateDocumentTheme(isDark);
+}
+
 export async function syncThemeWithLocal() {
   const { local } = await getCurrentTheme();
   if (!local) {
-    // Default theme for first-time users.
     await setTheme("dark");
     return;
   }

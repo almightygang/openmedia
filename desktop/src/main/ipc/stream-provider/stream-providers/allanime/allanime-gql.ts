@@ -2,12 +2,12 @@ import { createCipheriv, createDecipheriv, createHash } from "crypto";
 
 import { getElectronUserAgent } from "@/main/electron-user-agent";
 
-export const ALLANIME_REFERER = "https://youtu-chan.com";
-// anipy-cli uses mkissa as Origin on the episode source GET (aaReq path).
-const ALLANIME_ORIGIN = "https://mkissa.to";
+export const ALLANIME_REFERER = "https://mkissa.to";
+const ALLANIME_ORIGIN = ALLANIME_REFERER;
 
-const ALLANIME_BASE = "allanime.day";
-export const ALLANIME_API = `https://api.${ALLANIME_BASE}`;
+// Embed paths still live on allanime.day; the GraphQL gateway moved to mkissa.
+export const ALLANIME_API = "https://api.mkissa.net";
+const ALLANIME_LANE = "k7";
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 const TOBE_PARSED_FIELD = "tobeparsed";
@@ -20,13 +20,13 @@ const ALLANIME_TS_BUCKET_MS = 300_000;
 const MKISSA_URL = "https://mkissa.to/";
 const CDN_IMMUTABLE = "https://cdn.allanime.day/all/mk/_app/immutable/";
 
-const FALLBACK_EPOCH = 4128;
-const FALLBACK_BUILD_ID = "19";
-const FALLBACK_MASK = "bb8080c5940a4ea9be1f7b893eb3e9794b7af13674cce8b1ae4992481b4ba1b8";
-const FALLBACK_PART_B = "SVtSJQv/t+/zw7e4KL4gdyfKDe92l52fuMIAObotBWs=";
-// Persisted-query SHA-256 for the episode embed query (ani-cli legacy hash).
+const FALLBACK_EPOCH = 2961;
+const FALLBACK_BUILD_ID = "177";
+// AES-256 key (ani-cli `allanime_key`), already derived — used when the live scrape misses.
+const FALLBACK_KEY_HEX = "8ae218aa46cdade3faf53276be7d5ff7cd8fc657efb0138965b701492bd90e64";
+// Persisted-query SHA-256 for the episode embed query.
 const FALLBACK_EPISODE_QUERY_HASH =
-  "d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec";
+  "670bbf38d0868f446e2346c1e956ca2c40c416e733ca248fd54e04f1c8b99145";
 const FALLBACK_EPISODE_QUERY =
   "query ($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode( showId: $showId translationType: $translationType episodeString: $episodeString ) { episodeString sourceUrls } }";
 
@@ -47,6 +47,10 @@ type AaCrypto = {
 
 let cryptoCache: AaCrypto | null = null;
 let cryptoInflight: Promise<AaCrypto> | null = null;
+
+function fallbackKey(): Buffer {
+  return Buffer.from(FALLBACK_KEY_HEX, "hex");
+}
 
 function xorKey(maskHex: string, partB: string): Buffer {
   const mask = Buffer.from(maskHex, "hex");
@@ -136,9 +140,9 @@ async function fetchAaCryptoFromSite(): Promise<AaCrypto | null> {
     const appJs = await fetchText(`${CDN_IMMUTABLE}${appMatch[1]}`);
     // SvelteKit lists route chunks in a deps array, not only as import/from statements.
     // Match anipy-cli keygen.py: any "../chunks/*.js" string reference.
-    const imports = [
-      ...appJs.matchAll(/["']\.\.\/(chunks\/[A-Za-z0-9_-]+\.js)["']/g),
-    ].map((m) => m[1]!);
+    const imports = [...appJs.matchAll(/["']\.\.\/(chunks\/[A-Za-z0-9_-]+\.js)["']/g)].map(
+      (m) => m[1]!
+    );
 
     for (const chunk of imports) {
       const js = await fetchText(`${CDN_IMMUTABLE}${chunk}`);
@@ -148,7 +152,7 @@ async function fetchAaCryptoFromSite(): Promise<AaCrypto | null> {
       if (masks.length !== 1) continue;
 
       // buildId is inlined near the mask as a short numeric string fallback
-      // (currently "19"). Prefer that when present; otherwise use the last known value.
+      // (currently "177"). Prefer that when present; otherwise use the last known value.
       const buildIdMatch = js.match(new RegExp(`${masks[0]}["']?[\\s\\S]{0,80}?"(\\d{1,4})"`));
       const sourced = sourceQueryFromChunk(js);
 
@@ -177,8 +181,8 @@ function fallbackCrypto(): AaCrypto {
     expiresMs: Date.now() + 3_600_000,
     epoch: FALLBACK_EPOCH,
     buildId: FALLBACK_BUILD_ID,
-    key: xorKey(FALLBACK_MASK, FALLBACK_PART_B),
-    mask: FALLBACK_MASK,
+    key: fallbackKey(),
+    mask: FALLBACK_KEY_HEX,
     queryHash: FALLBACK_EPISODE_QUERY_HASH,
     episodeQuery: FALLBACK_EPISODE_QUERY,
   };
@@ -245,8 +249,8 @@ export async function getEpisodeEmbedPersistedQuery(): Promise<{
 }
 
 /**
- * Match anipy-cli `build_source_request`: payload is `{v,ts,epoch,qh}` only
- * (no buildId), and IV material is `epoch:qh:ts`.
+ * Match ani-cli #1899 `get_aa_req`: payload is `{v,ts,epoch,buildId,qh,k}`
+ * and IV material is `epoch:buildId:qh:ts:lane`.
  */
 function buildAaReq(persistedQueryHash: string, crypto: AaCrypto): string {
   const ts = Math.floor(Date.now() / ALLANIME_TS_BUCKET_MS) * ALLANIME_TS_BUCKET_MS;
@@ -254,9 +258,11 @@ function buildAaReq(persistedQueryHash: string, crypto: AaCrypto): string {
     v: 1,
     ts,
     epoch: crypto.epoch,
+    buildId: crypto.buildId,
     qh: persistedQueryHash,
+    k: ALLANIME_LANE,
   };
-  const ivMaterial = `${crypto.epoch}:${persistedQueryHash}:${ts}`;
+  const ivMaterial = `${crypto.epoch}:${crypto.buildId}:${persistedQueryHash}:${ts}:${ALLANIME_LANE}`;
   const iv = createHash("sha256").update(ivMaterial).digest().subarray(0, ALLANIME_IV_LENGTH);
   const jsonBlob = JSON.stringify(aaReqBase);
   const cipher = createCipheriv(ALLANIME_AES_ALGO, crypto.key, iv);
@@ -315,7 +321,7 @@ function decryptTobeparsed(blobBase64: string, cryptoKey: Buffer): unknown {
 
 export function normalizeAllAnimePayload(
   value: unknown,
-  cryptoKey: Buffer = cryptoCache?.key ?? xorKey(FALLBACK_MASK, FALLBACK_PART_B)
+  cryptoKey: Buffer = cryptoCache?.key ?? fallbackKey()
 ): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeAllAnimePayload(item, cryptoKey));
@@ -394,6 +400,7 @@ async function tryPersistedQueryGet(
 ): Promise<{ parsed: unknown | null; persistedQueryNotFound: boolean }> {
   const extensions: Record<string, unknown> = {
     persistedQuery: { version: 1, sha256Hash: persistedQueryHash },
+    k: ALLANIME_LANE,
     aaReq: buildAaReq(persistedQueryHash, crypto),
   };
   const url = new URL(`${ALLANIME_API}/api`);
@@ -407,8 +414,9 @@ async function tryPersistedQueryGet(
     const res = await fetch(url.toString(), {
       method: "GET",
       headers: {
-        Referer: `${ALLANIME_REFERER}/`,
+        Referer: ALLANIME_REFERER,
         Origin: ALLANIME_ORIGIN,
+        "x-build-id": crypto.buildId,
         "User-Agent": getElectronUserAgent(),
       },
     });
@@ -488,6 +496,7 @@ export async function allAnimeGql<T>(
   if (persistedQueryHash && crypto) {
     body.extensions = {
       persistedQuery: { version: 1, sha256Hash: persistedQueryHash },
+      k: ALLANIME_LANE,
       aaReq: buildAaReq(persistedQueryHash, crypto),
     };
   }
@@ -497,6 +506,7 @@ export async function allAnimeGql<T>(
     headers: {
       "Content-Type": "application/json",
       Referer: ALLANIME_REFERER,
+      ...(crypto ? { "x-build-id": crypto.buildId } : {}),
       "User-Agent": getElectronUserAgent(),
     },
     body: JSON.stringify(body),

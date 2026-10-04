@@ -1,4 +1,4 @@
-import { BrowserWindow, app } from "electron";
+import { BrowserWindow, app, nativeTheme } from "electron";
 // @ts-expect-error no types
 import started from "electron-squirrel-startup";
 import path from "path";
@@ -52,10 +52,14 @@ function registerAppProtocol() {
 }
 
 const createWindow = () => {
+  // Dark until the renderer applies a saved light or system preference.
+  nativeTheme.themeSource = "dark";
+
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 1320,
     height: 800,
+    backgroundColor: "#09090b",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

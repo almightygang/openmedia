@@ -5,7 +5,7 @@
 export const streamProviderAvailability = {
   hianime: true,
   anidb: false,
-  allanime: false,
+  allanime: true,
   animepahe: false,
   animeparadise: false,
   reanime: false,
