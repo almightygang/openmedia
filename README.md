@@ -1,60 +1,81 @@
-<img src="./assets/openanime-logo.png" width="128"/>
+<img src="./desktop-tauri/src-tauri/icons/icon.png" width="128"/>
 
-# Openanime
+# OpenMedia
 
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/wuon/openanime/total)
-![GitHub Release](https://img.shields.io/github/v/release/wuon/openanime)
+A fast, lightweight desktop anime app: React frontend on a Rust + Tauri v2
+shell. No Electron, no bundled Chromium — the system webview plus a native
+backend (local HLS proxy with ffmpeg transcode, AniList sync, provider
+requests in Rust).
 
-[Features](#features) |
-[Installation](#installation) |
-[License](#license)
+Fork of [wuon/openanime](https://github.com/wuon/openanime), rebuilt 1:1 on
+Tauri. The current provider implementation builds on ideas from
+[pystardust/ani-cli](https://github.com/pystardust/ani-cli), while keeping
+the app ready for additional providers over time.
 
-![Home Page Screen](./assets/home.png)
+## Status
 
-Openanime is an easy-to-use desktop anime application with a provider-based architecture. The current provider implementation builds on ideas from [pystardust/ani-cli](https://github.com/pystardust/ani-cli), while keeping the app ready for additional providers over time.
+Working: search, recent uploads, show details, episode listing, HLS watch
+playback (direct + ffmpeg-transcoded), watch history, AniList browsing/lists/
+favourites/watch-progress sync, themes, custom titlebars.
 
-## Features
+Provider: **AnimeParadise only** (sub-only). Six other upstreams were removed
+after live verification showed none of them resolves a playable stream in
+this build:
 
-- Stay up to date with the most recently uploaded anime
-- Browse and search for a specific anime series
-- Sub / dub support
-- More coming soon! Have a suggestion? [Create an issue](https://github.com/wuon/openanime/issues)
+| Provider | Verdict |
+|---|---|
+| AnimeParadise | Works (search → details → episodes → stream bytes verified live) |
+| AllAnime | Streams dead — site removed the `__aaCrypto` handshake the `aaReq` crypto needs (`AA_CRYPTO_MISSING`) |
+| HiAnime | Search recovered, but the Zoko embed CDN is unreachable → no streams |
+| ReAnime | Catalog works; flixcloud embed decrypt needs the site WASM module |
+| Senshi | API host TLS-unreachable from here |
+| AnimePahe | Cloudflare-403 on search |
+| AniDB | `anidb.app` now redirects to `anilab.so` (rewritten SPA, legacy markup gone) |
+
+Targets: Windows x64 + Linux x64.
 
 ## Installation
 
-### Windows
+Download the latest release for your platform (`AppImage` / `.deb` / `.rpm`
+for Linux, `nsis` `.exe` for Windows) and run it. Linux note: the AppImage
+needs `libwebkit2gtk-4.1` and `libgtk-3` present (stock on Ubuntu 22.04+).
 
-[![Windows - Download](https://img.shields.io/badge/Windows-download-blue)](https://github.com/wuon/openanime/releases/download/v3.1.2/Openanime-3.1.2.Setup.exe)
+No auto-update yet — check releases manually for now.
 
-This should work right out of the box, but if it doesn't feel free to [report an issue](https://github.com/wuon/openanime/issues)!
+### AniList (optional)
 
-### OSX
+Settings → connect AniList to sync your list, favourites, and watch
+progress. Two ways to sign in:
 
-[![OSX - Download](https://img.shields.io/badge/OSX-download-blue)](https://github.com/wuon/openanime/releases/download/v3.1.2/Openanime-darwin-arm64-3.1.2.zip)
+- **Pin page (easiest):** open the pin page, paste the token. No setup needed.
+- **Browser OAuth:** requires your own AniList API client id — register an
+  app at `anilist.co/settings/developer` with redirect URI
+  `openmedia://auth/anilist/callback`, then set `ANILIST_CLIENT_ID` in
+  `desktop-tauri/src-tauri/src/anilist/oauth.rs` and rebuild.
 
-Since the application is not signed or notarized, you will have to perform this command via terminal
+## Build from source
+
+Requirements: Node 20+, Rust stable, and on Linux the WebKitGTK dev
+libraries (`libwebkit2gtk-4.1-dev libgtk-3-dev` plus
+`libayatana-appindicator3-dev librsvg2-dev patchelf` for bundling).
 
 ```bash
-xattr -cr /Applications/Openanime.app
+cd desktop-tauri
+npm install
+npm run download-ffmpeg   # pinned ffmpeg sidecars (sha256-verified)
+npm run tauri:dev          # dev window with hot reload
+npm run build              # vite frontend -> dist/
+npm run tauri:build        # deb, rpm, AppImage, nsis
 ```
 
-**Why do I need to do this?**
+Tests: `cargo test` in `desktop-tauri/` (unit + live API checks),
+`npx tsc --noEmit` for the frontend.
 
-When you download an app from outside the App Store, macOS attaches a com.apple.quarantine attribute to it. If the app isn't digitally signed correctly, Gatekeeper may block it. Running xattr -cr on the application folder wipes those security flags, essentially "tricking" macOS into thinking the file was created locally rather than downloaded, allowing it to run.
+## Layout
 
-### Linux (Experimental)
-
-[![.rpm - Download](https://img.shields.io/badge/.rpm-download-blue)](https://github.com/wuon/openanime/releases/download/v3.1.2/Openanime-3.1.2-1.x86_64.rpm)
-[![.deb - Download](https://img.shields.io/badge/.deb-download-blue)](https://github.com/wuon/openanime/releases/download/3.1.2/openanime_3.1.2_amd64.deb)
-
-Unfortunately I haven't had time to optimize for Linux. Please let me know if anything is broken by [reporting an issue](https://github.com/wuon/openanime/issues)!
-
-## Additional Screenshots
-
-![Search Page](./assets/search.png)
-
-![Show Details Page](./assets/show-details.png)
+- `desktop-tauri/` — the app (frontend + Rust backend, see its README).
+- `LICENSE.txt` — license.
 
 ## License
 
-[GPL-3.0](https://github.com/wuon/openanime?tab=GPL-3.0-1-ov-file)
+[GPL-3.0](LICENSE.txt)
