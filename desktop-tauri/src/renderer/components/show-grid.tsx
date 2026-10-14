@@ -35,7 +35,7 @@ export function ShowCard({
     <button
       type="button"
       className={cn(
-        "group text-left focus-visible:outline-none",
+        "group text-left focus-visible:outline-none [content-visibility:auto] [contain-intrinsic-size:auto_320px]",
         layout === "carousel" && "flex-shrink-0 w-36 sm:w-40",
         layout === "grid" && "w-full min-w-0"
       )}

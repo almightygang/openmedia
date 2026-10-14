@@ -39,6 +39,10 @@ export type RichShowDetails = {
   seasonYear?: number | null;
   status?: string | null;
   anilistMediaId?: number | null;
+  views?: number | null;
+  viewerCount?: number | null;
+  isLive?: boolean | null;
+  category?: string | null;
   anilistListEntry?: {
     id: number;
     status: string;
@@ -150,6 +154,22 @@ function canonicalizeRichShowDetails(
     seasonYear: aniListDetails?.seasonYear ?? null,
     status: aniListDetails?.status ?? null,
     anilistMediaId: mediaId,
+    views:
+      typeof (streamDetails as { views?: unknown }).views === "number"
+        ? ((streamDetails as { views?: number }).views as number)
+        : null,
+    viewerCount:
+      typeof (streamDetails as { viewerCount?: unknown }).viewerCount === "number"
+        ? ((streamDetails as { viewerCount?: number }).viewerCount as number)
+        : null,
+    isLive:
+      typeof (streamDetails as { isLive?: unknown }).isLive === "boolean"
+        ? ((streamDetails as { isLive?: boolean }).isLive as boolean)
+        : null,
+    category:
+      typeof (streamDetails as { category?: unknown }).category === "string"
+        ? ((streamDetails as { category?: string }).category as string)
+        : null,
     anilistListEntry: aniListDetails?.mediaListEntry ?? null,
     anilistIsFavourite: aniListDetails?.isFavourite === true,
   };
@@ -184,10 +204,15 @@ export function useShowDetails(
 
     void (async () => {
       try {
+        // Live/video providers expose a single entry; dub is meaningless —
+        // skip the second fetch instead of loading the same token twice.
+        const liveOnly = providerOverride === "twitch" || providerOverride === "youtube";
         const [detailsResult, subResult, dubResult] = await Promise.allSettled([
           window.streamProvider.getShowDetails(providerId, providerOverride),
           window.streamProvider.getEpisodes(providerId, "sub", providerOverride),
-          window.streamProvider.getEpisodes(providerId, "dub", providerOverride),
+          liveOnly
+            ? Promise.resolve([] as string[])
+            : window.streamProvider.getEpisodes(providerId, "dub", providerOverride),
         ]);
 
         if (cancelled) return;

@@ -237,7 +237,15 @@ export function HistoryPage() {
     void window.recentlyWatched
       .read()
       .then((list) => {
-        const sorted = [...list].sort((a, b) => b.timestamp - a.timestamp);
+        // History is anime-only: live/video entries stay in the store for
+        // per-tab "last played" resume, but are hidden here. Entries without
+        // a provider predate tagging and are anime.
+        const sorted = [...list]
+          .filter((e) => {
+            const p = e.provider ?? e.episode.provider;
+            return p == null || p === "animeparadise";
+          })
+          .sort((a, b) => b.timestamp - a.timestamp);
         setEntries(sorted);
       })
       .finally(() => {
@@ -250,13 +258,11 @@ export function HistoryPage() {
   }, [load]);
 
   const goToShow = useCallback(
-    async (entry: HistoryEntry) => {
-      try {
-        await window.streamProvider.setActiveProvider(entry.provider);
-      } catch {
-        // best-effort; show route also carries providerId
-      }
-      navigate(`/show/${encodeURIComponent(entry.episode.id)}?providerId=${encodeURIComponent(entry.episode.providerId)}`);
+    (entry: HistoryEntry) => {
+      navigate(
+        `/show/${encodeURIComponent(entry.episode.id)}?providerId=${encodeURIComponent(entry.episode.providerId)}&provider=${encodeURIComponent(entry.provider)}`,
+        { state: { anime: { ...entry.episode, provider: entry.provider } } }
+      );
     },
     [navigate]
   );

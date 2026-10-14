@@ -65,7 +65,7 @@ npm install
 npm run download-ffmpeg   # pinned ffmpeg sidecars (sha256-verified)
 npm run tauri:dev          # dev window with hot reload
 npm run build              # vite frontend -> dist/
-npm run tauri:build        # deb, rpm, AppImage, nsis
+npm run tauri:build        # AppImage only (fast); use tauri:build:linux / :all for more bundles
 ```
 
 Tests: `cargo test` in `desktop-tauri/` (unit + live API checks),

@@ -23,6 +23,12 @@ export function useWelcomeSearch(debouncedQuery: string, options?: UseWelcomeSea
 
   useEffect(() => {
     const q = debouncedQuery.trim();
+    if (q.length < 2 && !loadLatestWhenEmpty) {
+      setResults([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     if (!q && !loadLatestWhenEmpty) {
       setResults([]);
       setLoading(false);

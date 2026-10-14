@@ -136,10 +136,29 @@ function MediaSurfaceInner({ src, className, videoRef, handlers }: MediaSurfaceP
     return `${className} !rounded-none !border-0`;
   }, [className]);
 
+  const mseAvailable = useMemo(() => {
+    try {
+      if (typeof MediaSource === "undefined") return false;
+      // WebKitGTK often exposes MediaSource but can't actually play HLS
+      // through MSE (missing GStreamer pieces). Require a playable type.
+      return (
+        typeof MediaSource.isTypeSupported === "function" &&
+        (MediaSource.isTypeSupported('video/mp2t; codecs="avc1.42E01E,mp4a.40.2"') ||
+          MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"'))
+      );
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Prefer native HLS (<video src>) when MSE is unavailable — e.g. Linux
+  // WebKitGTK with incomplete GStreamer. hls.js would stall forever there.
+  const useNativeHls = isHlsSource && !mseAvailable;
+
   return (
     <Player.Provider>
       <VideoSkin className="oa-videojs-player h-full w-full !bg-black !rounded-none !border-0">
-        {isHlsSource ? (
+        {isHlsSource && !useNativeHls ? (
           <HlsVideo
             ref={videoRef}
             src={src}

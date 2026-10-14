@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import { MacTitlebar } from "./titlebar-mac";
-import { WindowsTitlebar } from "./titlebar-windows";
+import { ControlsTitlebar } from "./titlebar-controls";
 
 export function Titlebar({
   children,
@@ -19,12 +19,13 @@ export function Titlebar({
       .catch(() => setOs(null));
   }, []);
 
-  // Default to mac layout until we know the OS to avoid runtime reliance on `process.platform`
-  const isWindows = os === "win32";
-
-  if (isWindows) {
-    return <WindowsTitlebar className={className}>{children}</WindowsTitlebar>;
+  // Only macOS gets the traffic-lights layout. Windows, Linux, and the
+  // pre-detection state all get the layout with min/max/close buttons —
+  // the window is undecorated (tauri.conf `decorations: false`), so the
+  // custom bar is the only place those controls exist.
+  if (os === "darwin") {
+    return <MacTitlebar className={className}>{children}</MacTitlebar>;
   }
 
-  return <MacTitlebar className={className}>{children}</MacTitlebar>;
+  return <ControlsTitlebar className={className}>{children}</ControlsTitlebar>;
 }

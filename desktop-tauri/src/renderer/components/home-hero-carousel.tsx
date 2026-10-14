@@ -12,9 +12,6 @@ import type { AniListShowDetails } from "@/shared/types";
 const HERO_BOTTOM_BLEND =
   "linear-gradient(to bottom, transparent 36%, hsl(var(--background) / 0.35) 58%, hsl(var(--background) / 0.82) 78%, hsl(var(--background)) 100%)";
 
-const HERO_LEFT_BLEND =
-  "linear-gradient(to left, transparent 36%, hsl(var(--background) / 0.35) 58%, hsl(var(--background) / 0.82) 70%, hsl(var(--background)) 100%)";
-
 function displayTitle(show: AniListShowDetails): string {
   return (
     show.title?.userPreferred ??
@@ -53,9 +50,24 @@ function shuffleInPlace<T>(items: T[]): T[] {
 }
 
 const ROTATE_MS = 10000;
-const AUTO_ADVANCE_TICK_MS = 250;
+const AUTO_ADVANCE_TICK_MS = 1000;
 
-function HomeHeroSlide({ show, isActive }: { show: AniListShowDetails; isActive: boolean }) {
+/** Modular distance on a ring, so only neighbours of the active slide stay mounted. */
+function ringDistance(a: number, b: number, len: number): number {
+  if (len <= 0) return 0;
+  const d = Math.abs(a - b) % len;
+  return Math.min(d, len - d);
+}
+
+function HomeHeroSlide({
+  show,
+  isActive,
+  shouldLoad,
+}: {
+  show: AniListShowDetails;
+  isActive: boolean;
+  shouldLoad: boolean;
+}) {
   const navigate = useNavigate();
   const title = displayTitle(show);
   const bg = heroImage(show);
@@ -78,22 +90,22 @@ function HomeHeroSlide({ show, isActive }: { show: AniListShowDetails; isActive:
       aria-hidden={!isActive}
     >
       <div className="relative h-[280px] overflow-hidden md:h-[440px]">
-        {bg ? (
+        {bg && shouldLoad ? (
           <>
-            <div
-              className="absolute inset-0 bg-cover bg-center"
-              style={{ backgroundImage: `url(${bg})` }}
+            <img
+              src={bg}
+              alt=""
               aria-hidden
+              draggable={false}
+              loading={isActive ? "eager" : "lazy"}
+              decoding="async"
+              fetchPriority={isActive ? "high" : "low"}
+              className="absolute inset-0 h-full w-full object-cover"
             />
             <div className="absolute inset-0 bg-black/60" aria-hidden />
             <div
               className="pointer-events-none absolute inset-0"
               style={{ background: HERO_BOTTOM_BLEND }}
-              aria-hidden
-            />
-            <div
-              className="pointer-events-none absolute inset-0"
-              style={{ background: HERO_LEFT_BLEND }}
               aria-hidden
             />
           </>
@@ -217,6 +229,7 @@ export function HomeHeroCarousel() {
   useEffect(() => {
     if (items.length <= 1) return;
     const id = window.setInterval(() => {
+      if (document.hidden) return;
       const elapsed = Date.now() - slideStartRef.current;
       if (elapsed >= ROTATE_MS && !advanceLockRef.current) {
         advanceLockRef.current = true;
@@ -256,9 +269,17 @@ export function HomeHeroCarousel() {
       aria-label="Popular this season"
     >
       <div className="relative z-0 h-full min-h-[280px] w-full md:min-h-[440px]">
-        {items.map((show, i) => (
-          <HomeHeroSlide key={show.id ?? i} show={show} isActive={i === activeIndex} />
-        ))}
+        {items.map((show, i) => {
+          if (items.length > 3 && ringDistance(i, activeIndex, items.length) > 1) return null;
+          return (
+            <HomeHeroSlide
+              key={show.id ?? i}
+              show={show}
+              isActive={i === activeIndex}
+              shouldLoad={ringDistance(i, activeIndex, items.length) <= 1}
+            />
+          );
+        })}
       </div>
 
       {items.length > 1 ? (
@@ -268,7 +289,7 @@ export function HomeHeroCarousel() {
               type="button"
               aria-label="Previous slide"
               onClick={goPrev}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-black/50 text-white transition-colors hover:bg-black/70"
             >
               <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -276,7 +297,7 @@ export function HomeHeroCarousel() {
               type="button"
               aria-label="Next slide"
               onClick={goNext}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-black/50 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-black/50 text-white transition-colors hover:bg-black/70"
             >
               <ChevronRight className="h-4 w-4" aria-hidden="true" />
             </button>

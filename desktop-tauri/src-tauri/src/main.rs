@@ -9,7 +9,39 @@ use tauri::{Emitter, Manager};
 
 pub struct ProxyPort(pub Mutex<u16>);
 
+/// Inside an AppImage, bundled libgstreamer can shadow the system one while
+/// shipping no plugins, so WebKit's WebProcess reports `appsink not found`
+/// even when system GStreamer is complete. Point plugin discovery at the
+/// system plugin dirs when they exist and the env doesn't already pin them.
+fn fix_appimage_gstreamer_env() {
+    if std::env::var_os("APPIMAGE").is_none() && std::env::var_os("APPDIR").is_none() {
+        return;
+    }
+    let candidates = [
+        "/usr/lib/gstreamer-1.0",
+        "/usr/lib/x86_64-linux-gnu/gstreamer-1.0",
+    ];
+    let existing: Vec<String> = candidates
+        .iter()
+        .filter(|p| std::path::Path::new(p).is_dir())
+        .map(|s| s.to_string())
+        .collect();
+    if existing.is_empty() {
+        return;
+    }
+    let joined = existing.join(":");
+    // Only fill in when unset; never override an explicit user setup.
+    if std::env::var_os("GST_PLUGIN_SYSTEM_PATH").is_none() {
+        std::env::set_var("GST_PLUGIN_SYSTEM_PATH", &joined);
+    }
+    if std::env::var_os("GST_PLUGIN_PATH").is_none() {
+        std::env::set_var("GST_PLUGIN_PATH", &joined);
+    }
+    eprintln!("[openmedia] AppImage detected, GST plugin path -> {joined}");
+}
+
 fn main() {
+    fix_appimage_gstreamer_env();
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -55,6 +87,10 @@ fn main() {
             // Resolve ffmpeg sidecar, publish proxy state, start local server.
             let handle = app.handle().clone();
             let ffmpeg = proxy::ffmpeg::resolve_ffmpeg_path(&handle);
+            eprintln!(
+                "[openmedia] ffmpeg sidecar -> {}",
+                ffmpeg.as_deref().unwrap_or("<unavailable>")
+            );
             handle.manage(proxy::ProxyState::with_ffmpeg(ffmpeg));
             let state = handle.state::<proxy::ProxyState>().inner().clone();
             tauri::async_runtime::spawn(async move {
@@ -91,6 +127,7 @@ fn main() {
             cmd::window::window_close,
             cmd::window::window_toggle_maximize,
             cmd::window::window_is_maximized,
+            cmd::window::window_start_dragging,
             // external
             cmd::external::external_open_url,
             // privacy
@@ -104,14 +141,19 @@ fn main() {
             // stream provider
             cmd::providers::stream_provider_active_get,
             cmd::providers::stream_provider_active_set,
+            cmd::providers::stream_provider_enabled_list,
+            cmd::providers::stream_provider_enabled_set,
             cmd::providers::stream_provider_search,
             cmd::providers::stream_provider_search_filters,
             cmd::providers::stream_provider_episodes,
             cmd::providers::stream_provider_stream_url,
+            cmd::providers::stream_provider_quality_url,
             cmd::providers::stream_provider_proxy_base,
             cmd::providers::stream_provider_prepare_transcode,
             cmd::providers::stream_provider_cancel_transcode,
             cmd::providers::stream_provider_transcode_progress,
+            cmd::providers::stream_provider_ffmpeg_status,
+            cmd::providers::stream_provider_transcode_last_error,
             cmd::providers::stream_provider_show_details,
             cmd::providers::stream_provider_recent_uploads,
             // anilist

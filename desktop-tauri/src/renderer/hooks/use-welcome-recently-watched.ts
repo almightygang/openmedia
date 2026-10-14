@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { HistoryEntry } from "@/shared/types";
+import type { HistoryEntry, StreamProvider } from "@/shared/types";
 
 const DISPLAY_UNIQUE_SHOW_LIMIT = 12;
 
-export function useWelcomeRecentlyWatched() {
+export function useWelcomeRecentlyWatched(provider?: StreamProvider) {
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [recentlyWatchedLoading, setRecentlyWatchedLoading] = useState(true);
 
@@ -12,13 +12,14 @@ export function useWelcomeRecentlyWatched() {
     const seen = new Set<string>();
     for (let i = historyEntries.length - 1; i >= 0 && out.length < DISPLAY_UNIQUE_SHOW_LIMIT; i--) {
       const e = historyEntries[i];
+      if (provider && e.provider !== provider && e.episode.provider !== provider) continue;
       const showKey = e.episode.id || e.episode.providerId;
       if (seen.has(showKey)) continue;
       seen.add(showKey);
       out.push(e);
     }
     return out;
-  }, [historyEntries]);
+  }, [historyEntries, provider]);
 
   useEffect(() => {
     let cancelled = false;

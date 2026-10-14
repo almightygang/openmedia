@@ -7,6 +7,7 @@ import { Button } from "@/renderer/components/ui/button";
 import { cn } from "@/renderer/lib/utils";
 
 import { TitlebarNavSearchHelper } from "./titlebar-nav-search-helper";
+import { handleTitlebarMouseDown } from "./titlebar-drag";
 import { Separator } from "./ui/separator";
 
 export function MacTitlebar({
@@ -19,13 +20,17 @@ export function MacTitlebar({
   const navigate = useNavigate();
 
   return (
-    <div className={cn("flex w-screen min-h-12 fixed z-10 bg-background draglayer", className)}>
+    <div
+      data-tauri-drag-region
+      onMouseDown={handleTitlebarMouseDown}
+      className={cn("flex w-screen min-h-12 fixed z-10 bg-background draglayer", className)}
+    >
       <div className="flex items-center gap-2 px-4 pl-20 w-full">
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="flex items-center gap-2 clickable"
+          className="flex shrink-0 items-center gap-2 clickable"
           onClick={() => navigate("/")}
         >
           <img
@@ -43,7 +48,7 @@ export function MacTitlebar({
           <span className="text-xs font-semibold tracking-tight">Openanime</span>
         </Button>
 
-        <Separator orientation="vertical" className="h-4" />
+        <Separator orientation="vertical" className="h-4 shrink-0" />
 
         <TitlebarNavSearchHelper />
 

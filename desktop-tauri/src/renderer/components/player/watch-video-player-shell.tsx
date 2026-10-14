@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, Loader2, Play, RefreshCw } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/renderer/lib/utils";
@@ -14,10 +14,10 @@ import {
 } from "../ui/select";
 
 const watchSelectTriggerClass =
-  "h-8 w-[160px] border-white/25 bg-white/[0.12] text-white shadow-sm backdrop-blur-xl ring-offset-0 ring-offset-transparent placeholder:text-white/55 focus:ring-2 focus:ring-white/30 focus:ring-offset-0 hover:bg-white/[0.18] [&>svg]:text-white/75";
+  "h-8 w-[160px] border-white/25 bg-white/[0.12] text-white shadow-sm ring-offset-0 ring-offset-transparent placeholder:text-white/55 focus:ring-2 focus:ring-white/30 focus:ring-offset-0 hover:bg-white/[0.18] [&>svg]:text-white/75";
 
 const watchSelectContentClass =
-  "z-[120] max-h-[min(24rem,70vh)] rounded-xl border border-white/20 bg-black/50 p-1 text-white shadow-2xl shadow-black/50 backdrop-blur-2xl";
+  "z-[120] max-h-[min(24rem,70vh)] rounded-xl border border-white/20 bg-black/85 p-1 text-white shadow-2xl shadow-black/50";
 
 const watchSelectItemClass =
   "rounded-lg py-2 pl-8 pr-2 text-white/95 cursor-pointer focus:bg-white/[0.14] focus:text-white data-[highlighted]:bg-white/[0.14] data-[highlighted]:text-white data-[state=checked]:bg-white/[0.08]";
@@ -36,7 +36,11 @@ interface WatchVideoPlayerShellProps {
   streamError: string | null;
   playbackError: string | null;
   displayName: string;
+  /** Full header text. Falls back to `{displayName} · Episode N (Sub/Dub)`. */
+  headerLabel?: string;
   isDub: boolean;
+  /** Live/video kinds have no sub/dub modes. */
+  hideModeBadge?: boolean;
   showLoading: boolean;
   hasShowDetails: boolean;
   showError: string | null;
@@ -63,7 +67,9 @@ export function WatchVideoPlayerShell({
   streamError,
   playbackError,
   displayName,
+  headerLabel,
   isDub,
+  hideModeBadge,
   showLoading,
   hasShowDetails,
   showError,
@@ -88,6 +94,8 @@ export function WatchVideoPlayerShell({
   const [isSubtitleSelectOpen, setIsSubtitleSelectOpen] = useState(false);
   const [isQualitySelectOpen, setIsQualitySelectOpen] = useState(false);
   const [activeSubtitleLabel, setActiveSubtitleLabel] = useState<string | null>(null);
+  /** True when the browser rejected programmatic autoplay (needs a tap). */
+  const [needsGesture, setNeedsGesture] = useState(false);
 
   useEffect(() => {
     // Keep subtitles off until the user picks one (or playback starts and we
@@ -99,6 +107,49 @@ export function WatchVideoPlayerShell({
     }
     setActiveSubtitleLabel(null);
   }, [subtitleTracks, streamRevision]);
+
+  useEffect(() => {
+    setNeedsGesture(false);
+  }, [playUrl, streamRevision]);
+
+  // Fast-resolving sources (live) can miss the click's user activation by the
+  // time the URL is ready, so the webview pauses immediately. Attempt playback
+  // explicitly; on gesture rejection show a tap-to-play overlay instead of a
+  // silently paused frame.
+  useEffect(() => {
+    if (!playUrl || playbackError) return;
+    const video = videoRef.current;
+    if (!video) return;
+    let cancelled = false;
+    const clear = () => {
+      if (!cancelled) setNeedsGesture(false);
+    };
+    const tryPlay = () => {
+      try {
+        const pending = video.play();
+        if (pending && typeof pending.catch === "function") {
+          pending.catch((err: unknown) => {
+            if (cancelled) return;
+            const name = err instanceof DOMException ? err.name : "";
+            if (name === "NotAllowedError") setNeedsGesture(true);
+          });
+        }
+      } catch {
+        // play() threw synchronously — leave the native controls to handle it.
+      }
+    };
+    video.addEventListener("playing", clear);
+    if (video.readyState >= 2) {
+      tryPlay();
+    } else {
+      video.addEventListener("canplay", tryPlay, { once: true });
+    }
+    return () => {
+      cancelled = true;
+      video.removeEventListener("playing", clear);
+      video.removeEventListener("canplay", tryPlay);
+    };
+  }, [playUrl, playbackError, streamRevision, videoRef]);
 
   // Enable default subtitles after playback starts — do not wrap onPlaying
   // (unstable inline handlers remount HlsVideo and flicker on cursor move).
@@ -288,6 +339,26 @@ export function WatchVideoPlayerShell({
                 </Button>
               </div>
             ) : null}
+            {needsGesture && !playbackError ? (
+              <button
+                type="button"
+                aria-label="Play"
+                onClick={() => {
+                  const video = videoRef.current;
+                  if (!video) return;
+                  void video.play().then(
+                    () => setNeedsGesture(false),
+                    () => setNeedsGesture(true)
+                  );
+                }}
+                className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/60 text-white focus-visible:outline-none"
+              >
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/15 ring-1 ring-white/30 backdrop-blur-sm">
+                  <Play className="h-8 w-8 fill-current" aria-hidden />
+                </span>
+                <span className="text-sm text-white/90">Tap to play</span>
+              </button>
+            ) : null}
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2 text-muted-foreground px-4 text-center">
@@ -325,7 +396,7 @@ export function WatchVideoPlayerShell({
               Loading show...
             </span>
           ) : (
-            `${displayName} · Episode ${currentEpisode} (${isDub ? "Dub" : "Sub"})`
+            headerLabel ?? (hideModeBadge ? `${displayName}` : `${displayName} · Episode ${currentEpisode} (${isDub ? "Dub" : "Sub"})`)
           )}
         </span>
         {showError && !hasShowDetails ? (

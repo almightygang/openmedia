@@ -259,6 +259,13 @@ async fn handle_stream_passthrough(
         }
         map.append(name.clone(), value.clone());
     }
+    // Byte passthrough is untransformed: preserve the upstream length so
+    // players know the duration and can seek (the drop list strips it because
+    // rewritten HLS manifests change length; here bytes are identical).
+    // Content-Range (206) and Accept-Ranges already pass through above.
+    if let Some(len) = upstream.headers().get(header::CONTENT_LENGTH) {
+        map.append(header::CONTENT_LENGTH, len.clone());
+    }
     if is_webvtt_subtitle_url(&target_url) {
         map.insert(
             header::CONTENT_TYPE,

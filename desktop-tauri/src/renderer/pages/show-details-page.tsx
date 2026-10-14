@@ -19,7 +19,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/renderer/components/ui/tabs";
 import { useGoBack } from "@/renderer/hooks/use-go-back";
 import { useShowDetails } from "@/renderer/hooks/use-show-details";
 import { stripAniListDescription } from "@/renderer/lib/anilist-helpers";
-import type { AniListMediaListStatus, Show } from "@/shared/types";
+import { isStreamProviderName } from "@/shared/stream-providers";
+import type { AniListMediaListStatus, Show, ShowSearchResult, StreamProvider } from "@/shared/types";
 
 const SHOW_DETAILS_EPISODE_SKELETON_COUNT = 8;
 
@@ -90,13 +91,24 @@ function ShowDetailsSkeleton({ onBack }: { onBack: () => void }) {
 }
 
 interface LocationState {
-  anime?: Show;
+  anime?: Show | (ShowSearchResult & { mode?: Show["mode"]; name?: string });
 }
 
 type AnimeMode = "sub" | "dub";
 type EpisodeSort = "newest" | "oldest";
 
 const MODES: AnimeMode[] = ["sub", "dub"];
+
+function formatCount(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(n);
+}
+
+function isLiveProvider(provider: StreamProvider | undefined): boolean {
+  return provider === "twitch" || provider === "youtube";
+}
 
 export function ShowDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -110,6 +122,11 @@ export function ShowDetailsPage() {
   const [episodeQuery, setEpisodeQuery] = useState("");
   const [episodeSort, setEpisodeSort] = useState<EpisodeSort>("newest");
   const providerIdFromQuery = new URLSearchParams(location.search).get("providerId") ?? undefined;
+  const providerParam = new URLSearchParams(location.search).get("provider") ?? undefined;
+  const providerOverride: StreamProvider | undefined =
+    (state?.anime && "provider" in state.anime && isStreamProviderName(state.anime.provider)
+      ? state.anime.provider
+      : undefined) ?? (providerParam && isStreamProviderName(providerParam) ? providerParam : undefined);
 
   const anime =
     state?.anime ??
@@ -127,7 +144,11 @@ export function ShowDetailsPage() {
     setActiveMode(anime?.mode ?? "sub");
   }, [anime?.id, anime?.mode]);
 
-  const { details, episodesByMode, loading, error } = useShowDetails(id, anime?.providerId);
+  const { details, episodesByMode, loading, error } = useShowDetails(
+    id,
+    anime?.providerId,
+    providerOverride
+  );
 
   const anilistMediaId = details?.anilistMediaId ?? null;
   const hasAniListId = anilistMediaId != null && anilistMediaId > 0;
@@ -150,6 +171,7 @@ export function ShowDetailsPage() {
     (episode: string) => {
       setPlayingEpisode(episode);
 
+      const parsedIndex = Number(episode);
       navigate("/watch", {
         state: {
           episode: {
@@ -161,9 +183,11 @@ export function ShowDetailsPage() {
               native: details?.title.native,
             },
             thumbnail: details?.coverImage,
-            index: Number(episode),
+            index: Number.isFinite(parsedIndex) ? parsedIndex : 0,
+            token: episode,
             mode: activeMode,
           },
+          ...(providerOverride ? { providerOverride } : {}),
         },
       });
       setPlayingEpisode(null);
@@ -179,6 +203,7 @@ export function ShowDetailsPage() {
       activeMode,
       id,
       anime?.providerId,
+      providerOverride,
     ]
   );
 
@@ -216,11 +241,12 @@ export function ShowDetailsPage() {
     details?.title.native ??
     anime?.name ??
     "Unknown";
+  const liveDetails = isLiveProvider(providerOverride);
   const subEpisodes = episodesByMode.sub.status === "loaded" ? episodesByMode.sub.episodes : [];
   const dubEpisodes = episodesByMode.dub.status === "loaded" ? episodesByMode.dub.episodes : [];
   const hasSub = subEpisodes.length > 0;
-  const hasDub = dubEpisodes.length > 0;
-  const tabs = MODES.filter((mode) => (mode === "sub" ? hasSub : hasDub));
+  const hasDub = !liveDetails && dubEpisodes.length > 0;
+  const tabs = liveDetails ? [] : MODES.filter((mode) => (mode === "sub" ? hasSub : hasDub));
   const episodes = activeMode === "sub" ? subEpisodes : dubEpisodes;
   const richEpisodes =
     activeMode === "sub" ? (details?.episodes.sub ?? []) : (details?.episodes.dub ?? []);
@@ -264,9 +290,6 @@ export function ShowDetailsPage() {
   const heroBottomBlendGradient =
     "linear-gradient(to bottom, transparent 36%, hsl(var(--background) / 0.35) 58%, hsl(var(--background) / 0.82) 78%, hsl(var(--background)) 100%)";
 
-  const heroLeftBlendGradient =
-    "linear-gradient(to left, transparent 36%, hsl(var(--background) / 0.35) 58%, hsl(var(--background) / 0.82) 70%, hsl(var(--background)) 100%)";
-
   return (
     <div className="relative mx-auto flex w-full max-w-[1600px] flex-col gap-0 p-6 md:p-8">
       <div className="relative -mx-8 overflow-hidden -mt-8">
@@ -281,11 +304,6 @@ export function ShowDetailsPage() {
             <div
               className="pointer-events-none absolute inset-0 z-[1]"
               style={{ background: heroBottomBlendGradient }}
-              aria-hidden
-            />
-            <div
-              className="pointer-events-none absolute inset-0 z-[1]"
-              style={{ background: heroLeftBlendGradient }}
               aria-hidden
             />
           </>
@@ -357,6 +375,8 @@ export function ShowDetailsPage() {
                 src={details.coverImage}
                 draggable={false}
                 alt=""
+                loading="lazy"
+                decoding="async"
                 className="h-64 w-auto rounded-xl border-2 object-cover border-transparent/20"
               />
             )}
@@ -371,7 +391,7 @@ export function ShowDetailsPage() {
             <Input
               value={episodeQuery}
               onChange={(event) => setEpisodeQuery(event.target.value)}
-              placeholder="Search episodes..."
+              placeholder={liveDetails ? "Search videos..." : "Search episodes..."}
               className="h-10 bg-background/90 pl-9"
             />
           </div>
@@ -428,11 +448,19 @@ export function ShowDetailsPage() {
               {visibleEpisodeCards.map((item) => {
                 const { episode, index, thumbnail, title } = item;
                 const isPlaying = playingEpisode === episode;
+                const live = isLiveProvider(providerOverride);
+                const views = details?.views ?? details?.viewerCount ?? null;
+                const badge = live
+                  ? views != null
+                    ? `${formatCount(views)}${details?.isLive ? " watching" : " views"}`
+                    : (details?.isLive ? "LIVE" : "Video")
+                  : undefined;
                 return (
                   <li key={`${activeMode}-${episode}`} className="w-full">
                     <EpisodeCard
                       thumbnailUrl={thumbnail}
-                      episodeIndex={index}
+                      episodeIndex={live ? undefined : index}
+                      badge={badge}
                       subtitle={title}
                       onClick={() => playEpisode(episode)}
                       disabled={isPlaying}

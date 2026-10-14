@@ -1,41 +1,18 @@
 import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { HomeAnimeSection } from "@/renderer/components/home/home-anime-section";
+import { HomePlaceholderSection } from "@/renderer/components/home/home-placeholder-section";
+import { HOME_SECTION_ICONS } from "@/renderer/components/home/home-section-tabs";
+import { useHomeSection } from "@/renderer/components/home/home-section-context";
 import { PinnedIssuesBanner } from "@/renderer/components/pinned-issues-banner";
-import { EpisodeCard } from "@/renderer/components/episode-card";
-import { HomeHeroCarousel } from "@/renderer/components/home-hero-carousel";
-import { HorizontalCarousel } from "@/renderer/components/horizontal-carousel";
-import { Badge } from "@/renderer/components/ui/badge";
-import { Skeleton } from "@/renderer/components/ui/skeleton";
 import { usePinnedGithubIssues } from "@/renderer/hooks/use-pinned-github-issues";
-import { useResumeHistoryEntry } from "@/renderer/hooks/use-resume-history-entry";
-import { useWelcomeRecentlyUploaded } from "@/renderer/hooks/use-welcome-recent-uploads";
-import { useWelcomeRecentlyWatched } from "@/renderer/hooks/use-welcome-recently-watched";
+import { HOME_SECTIONS } from "@/shared/home-sections";
 import type { Episode } from "@/shared/types";
-
-const RECENT_PAGE_SIZE = 12;
-
-function RecentUploadsCarouselSkeleton({ count = 8 }: { count?: number }) {
-  return (
-    <div
-      className="flex gap-3 overflow-hidden pb-2 px-8 -mx-8"
-      aria-busy="true"
-      aria-label="Loading recently uploaded"
-    >
-      {Array.from({ length: count }, (_, i) => (
-        <div key={i} className="flex-shrink-0 w-36 sm:w-40">
-          <Skeleton className="w-full aspect-[2/3] rounded-2xl" />
-        </div>
-      ))}
-    </div>
-  );
-}
 
 export function WelcomePage() {
   const navigate = useNavigate();
-  const { resumeHistoryEntry, disabledProviderDialog } = useResumeHistoryEntry();
-  const { recentUploads, recentUploadsLoading } = useWelcomeRecentlyUploaded(RECENT_PAGE_SIZE);
-  const { recentlyWatched, recentlyWatchedLoading } = useWelcomeRecentlyWatched();
+  const { section } = useHomeSection();
   const { issues: pinnedIssues } = usePinnedGithubIssues();
   const showPinnedBanner = pinnedIssues.length > 0;
 
@@ -46,74 +23,32 @@ export function WelcomePage() {
     [navigate]
   );
 
+  const activeMeta = HOME_SECTIONS.find((s) => s.id === section) ?? HOME_SECTIONS[0];
+
+  const sectionProvider =
+    section === "twitch" ? "twitch" as const : section === "youtube" ? "youtube" as const : null;
+
   return (
     <div className="w-full max-w-[1600px] mx-auto flex flex-col gap-6 p-6 md:p-8">
-      {disabledProviderDialog}
-      <>
-        <div className="-mt-6 -mx-6 md:-mt-8 md:-mx-8">
-          {showPinnedBanner ? <PinnedIssuesBanner issues={pinnedIssues} /> : null}
-          <HomeHeroCarousel />
-        </div>
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-semibold">Continue watching</h2>
-          {recentlyWatchedLoading ? (
-            <p className="text-muted-foreground text-sm">Loading…</p>
-          ) : recentlyWatched.length > 0 ? (
-            <HorizontalCarousel>
-              {recentlyWatched.map((entry) => (
-                <EpisodeCard
-                  key={entry.id}
-                  layout="carousel"
-                  thumbnailUrl={entry.episode.thumbnail}
-                  badge={`Episode ${String(entry.episode.index)}`}
-                  subtitle={
-                    entry.episode.title.english ??
-                    entry.episode.title.romanji ??
-                    entry.episode.title.native ??
-                    entry.episode.id
-                  }
-                  onClick={() => {
-                    resumeHistoryEntry(entry);
-                  }}
-                  totalDurationMs={entry.totalDurationMs}
-                  currentDurationMs={entry.currentDurationMs}
-                />
-              ))}
-            </HorizontalCarousel>
-          ) : (
-            <p className="text-muted-foreground text-sm">No recently watched anime.</p>
-          )}
-        </section>
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-semibold">Recently uploaded</h2>
-          {recentUploadsLoading ? (
-            <RecentUploadsCarouselSkeleton />
-          ) : recentUploads.length > 0 ? (
-            <HorizontalCarousel
-              items={recentUploads.map((episode) => ({
-                id: `${episode.id || episode.providerId}-${episode.index}-${episode.mode}`,
-                coverUrl: episode.thumbnail,
-                title:
-                  episode.title.english ??
-                  episode.title.romanji ??
-                  episode.title.native ??
-                  episode.providerId,
-                badges: (
-                  <Badge
-                    variant="glass"
-                    className="text-white flex items-center gap-1 align-middle"
-                  >
-                    {`Episode ${episode.index}`}
-                  </Badge>
-                ),
-                onClick: () => openRecentAnime(episode),
-              }))}
-            />
-          ) : (
-            <p className="text-muted-foreground text-sm">No recent anime found.</p>
-          )}
-        </section>
-      </>
+      <div className="-mt-6 -mx-6 md:-mt-8 md:-mx-8">
+        {showPinnedBanner ? <PinnedIssuesBanner issues={pinnedIssues} /> : null}
+      </div>
+
+      {section === "anime" ? (
+        <HomeAnimeSection onOpenEpisode={openRecentAnime} />
+      ) : sectionProvider ? (
+        <HomeAnimeSection
+          key={sectionProvider}
+          provider={sectionProvider}
+          onOpenEpisode={openRecentAnime}
+        />
+      ) : (
+        <HomePlaceholderSection
+          icon={HOME_SECTION_ICONS[activeMeta.id]}
+          title={activeMeta.placeholderTitle}
+          description={activeMeta.placeholderDescription}
+        />
+      )}
     </div>
   );
 }

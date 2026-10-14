@@ -3,19 +3,13 @@ import React, { useCallback, useEffect, useState } from "react";
 import { AniListConnectDialog } from "@/renderer/components/anilist-connect-dialog";
 import { ThemePicker } from "@/renderer/components/theme-picker";
 import { Button } from "@/renderer/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/renderer/components/ui/select";
 import { Switch } from "@/renderer/components/ui/switch";
 import type { AppUpdateCheckResult } from "@/shared/app-update-types";
 import {
   STREAM_PROVIDER_LABELS,
   getEnabledStreamProviders,
   isStreamProviderName,
+  normalizeEnabledStreamProviders,
 } from "@/shared/stream-providers";
 import type { AniListIntegrationStatus, StreamProvider } from "@/shared/types";
 
@@ -39,12 +33,12 @@ export function SettingsPage() {
   const [anilistConnectOpen, setAnilistConnectOpen] = useState(false);
   const [anilistDisconnectBusy, setAnilistDisconnectBusy] = useState(false);
   const [anilistError, setAnilistError] = useState<string | null>(null);
-  const enabledStreamProviders = getEnabledStreamProviders();
-  const [activeStreamProvider, setActiveStreamProvider] = useState<StreamProvider>(
-    enabledStreamProviders[0] ?? "animeparadise"
+  const availableStreamProviders = getEnabledStreamProviders();
+  const [enabledStreamProviders, setEnabledStreamProviders] = useState<StreamProvider[]>(() =>
+    normalizeEnabledStreamProviders(availableStreamProviders[0])
   );
   const [streamProviderLoading, setStreamProviderLoading] = useState(true);
-  const [streamProviderBusy, setStreamProviderBusy] = useState(false);
+  const [streamProviderBusy, setStreamProviderBusy] = useState<StreamProvider | null>(null);
   const [openLogsBusy, setOpenLogsBusy] = useState(false);
   const [openLogsError, setOpenLogsError] = useState<string | null>(null);
   const [incognitoEnabled, setIncognitoEnabled] = useState(false);
@@ -53,12 +47,32 @@ export function SettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const fallback = normalizeEnabledStreamProviders(availableStreamProviders[0]);
     void window.streamProvider
-      .getActiveProvider()
-      .then((provider) => {
-        if (!cancelled) {
-          setActiveStreamProvider(provider);
+      .getEnabledProviders()
+      .then(
+        (providers) => {
+          if (!cancelled) {
+            setEnabledStreamProviders(normalizeEnabledStreamProviders(providers));
+          }
+        },
+        () => {
+          // Older backend without the multi-provider commands — fall back to
+          // the legacy single active provider so Settings still works.
+          void window.streamProvider
+            .getActiveProvider()
+            .then((provider) => {
+              if (!cancelled && isStreamProviderName(provider)) {
+                setEnabledStreamProviders(normalizeEnabledStreamProviders([provider]));
+              }
+            })
+            .catch(() => {
+              if (!cancelled) setEnabledStreamProviders(fallback);
+            });
         }
+      )
+      .catch(() => {
+        if (!cancelled) setEnabledStreamProviders(fallback);
       })
       .finally(() => {
         if (!cancelled) {
@@ -68,7 +82,7 @@ export function SettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [availableStreamProviders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,15 +191,23 @@ export function SettingsPage() {
     }
   }, [updateCheck?.releaseUrl]);
 
-  const onStreamProviderChange = useCallback(async (provider: StreamProvider) => {
-    setStreamProviderBusy(true);
-    try {
-      const next = await window.streamProvider.setActiveProvider(provider);
-      setActiveStreamProvider(next);
-    } finally {
-      setStreamProviderBusy(false);
-    }
-  }, []);
+  const onStreamProviderToggle = useCallback(
+    async (provider: StreamProvider, enabled: boolean) => {
+      const next = enabled
+        ? normalizeEnabledStreamProviders([...enabledStreamProviders, provider])
+        : enabledStreamProviders.filter((p) => p !== provider);
+      // Keep at least one provider enabled.
+      if (next.length === 0) return;
+      setStreamProviderBusy(provider);
+      try {
+        const saved = await window.streamProvider.setEnabledProviders(next);
+        setEnabledStreamProviders(normalizeEnabledStreamProviders(saved));
+      } finally {
+        setStreamProviderBusy(null);
+      }
+    },
+    [enabledStreamProviders]
+  );
 
   const onIncognitoChange = useCallback(async (enabled: boolean) => {
     setIncognitoBusy(true);
@@ -352,35 +374,37 @@ export function SettingsPage() {
         </Button>
       </section>
 
-      <section className="rounded-xl border border-border p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <section className="rounded-xl border border-border p-5 flex flex-col gap-4">
         <div className="space-y-1 min-w-0">
-          <h2 className="text-sm font-medium">Streaming provider</h2>
+          <h2 className="text-sm font-medium">Streaming providers</h2>
           <p className="text-sm text-muted-foreground">
-            Choose which upstream source is used for search, episodes, and playback.
+            Choose which upstream sources are used. Search and discovery query every enabled
+            provider at the same time.
           </p>
         </div>
-        <Select
-          value={activeStreamProvider}
-          onValueChange={(value) => {
-            if (isStreamProviderName(value)) {
-              void onStreamProviderChange(value);
-            }
-          }}
-          disabled={
-            streamProviderLoading || streamProviderBusy || enabledStreamProviders.length === 0
-          }
-        >
-          <SelectTrigger className="sm:shrink-0 w-full sm:w-[220px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {enabledStreamProviders.map((provider) => (
-              <SelectItem key={provider} value={provider}>
-                {STREAM_PROVIDER_LABELS[provider]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex flex-col divide-y divide-border rounded-lg border border-border">
+          {availableStreamProviders.map((provider) => {
+            const checked = enabledStreamProviders.includes(provider);
+            const busy = streamProviderBusy === provider;
+            const isLastEnabled = checked && enabledStreamProviders.length === 1;
+            return (
+              <label
+                key={provider}
+                className="flex items-center justify-between gap-4 px-4 py-3 cursor-pointer"
+              >
+                <span className="text-sm font-medium">{STREAM_PROVIDER_LABELS[provider]}</span>
+                <Switch
+                  checked={checked}
+                  disabled={streamProviderLoading || busy || isLastEnabled}
+                  onCheckedChange={(next) => {
+                    void onStreamProviderToggle(provider, next);
+                  }}
+                  aria-label={STREAM_PROVIDER_LABELS[provider]}
+                />
+              </label>
+            );
+          })}
+        </div>
       </section>
 
       <section className="rounded-xl border border-border p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

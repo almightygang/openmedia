@@ -90,7 +90,7 @@ async fn init_session(
         .map_err(|e| format!("cache dir: {e}"))?;
 
     let mut hls_input = false;
-    let duration = match probe_duration_from_hls_playlist(state, input_url).await {
+    let duration = match probe_duration_from_hls_playlist(state, input_url, referer).await {
         Some(d) if d > 0.0 => {
             hls_input = true;
             d
@@ -259,14 +259,19 @@ fn cancel_session(state: &ProxyState, key: &str) {
 // ---------------------------------------------------------------------------
 
 /// Sum #EXTINF from an HLS media playlist (follow master → first variant).
-async fn probe_duration_from_hls_playlist(state: &ProxyState, playlist_url: &str) -> Option<f64> {
-    let text = state
+async fn probe_duration_from_hls_playlist(
+    state: &ProxyState,
+    playlist_url: &str,
+    referer: Option<&str>,
+) -> Option<f64> {
+    let mut req = state
         .http
         .get(playlist_url)
-        .timeout(Duration::from_millis(PLAYLIST_PROBE_TIMEOUT_MS))
-        .send()
-        .await
-        .ok()?;
+        .timeout(Duration::from_millis(PLAYLIST_PROBE_TIMEOUT_MS));
+    if let Some(r) = referer.filter(|r| !r.trim().is_empty()) {
+        req = req.header(reqwest::header::REFERER, r.to_string());
+    }
+    let text = req.send().await.ok()?;
     if !text.status().is_success() {
         return None;
     }
@@ -276,13 +281,14 @@ async fn probe_duration_from_hls_playlist(state: &ProxyState, playlist_url: &str
     }
     if text.contains("#EXT-X-STREAM-INF") {
         let media_url = pick_first_variant_url(&text, playlist_url)?;
-        let media = state
+        let mut media_req = state
             .http
             .get(&media_url)
-            .timeout(Duration::from_millis(PLAYLIST_PROBE_TIMEOUT_MS))
-            .send()
-            .await
-            .ok()?;
+            .timeout(Duration::from_millis(PLAYLIST_PROBE_TIMEOUT_MS));
+        if let Some(r) = referer.filter(|r| !r.trim().is_empty()) {
+            media_req = media_req.header(reqwest::header::REFERER, r.to_string());
+        }
+        let media = media_req.send().await.ok()?;
         if !media.status().is_success() {
             return None;
         }
@@ -999,10 +1005,36 @@ pub async fn prepare_transcoded_stream(
     )
     .await
     {
-        Ok(Ok(_)) => update_session_progress(state, &key, "Ready to play"),
-        Ok(Err(_)) | Err(_) => {
-            // Still return Ok — the player keeps waiting on segment requests.
+        Ok(Ok(_)) => {
+            update_session_progress(state, &key, "Ready to play");
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            let msg = format!("First video segment not ready: {e}");
+            state.set_progress(
+                &key,
+                TranscodeProgress {
+                    state: "error",
+                    progress_percent: None,
+                    message: msg.clone(),
+                },
+            );
+            Err(msg)
+        }
+        Err(_) => {
+            let msg = format!(
+                "Timed out after {}s waiting for first video segment (transcode still running in background)",
+                FIRST_SEGMENT_WAIT_MS / 1000
+            );
+            state.set_progress(
+                &key,
+                TranscodeProgress {
+                    state: "error",
+                    progress_percent: None,
+                    message: msg.clone(),
+                },
+            );
+            Err(msg)
         }
     }
-    Ok(())
 }

@@ -4,6 +4,8 @@ export type StreamProviderName = keyof typeof streamProviderAvailability;
 
 export const STREAM_PROVIDER_LABELS: Record<StreamProviderName, string> = {
   animeparadise: "AnimeParadise",
+  twitch: "Twitch",
+  youtube: "YouTube",
 };
 
 export const ALL_STREAM_PROVIDER_NAMES = Object.keys(
@@ -37,4 +39,22 @@ export function resolveEnabledStreamProvider(value: unknown): StreamProviderName
   }
 
   return enabled[0];
+}
+
+/**
+ * Normalize a stored enabled-provider list (multi-provider mode).
+ * Accepts arrays, single names, nullish values; drops unknown/disabled
+ * names and falls back to the first available provider.
+ */
+export function normalizeEnabledStreamProviders(value: unknown): StreamProviderName[] {
+  const available = getEnabledStreamProviders();
+  const fallback = available.length > 0 ? [available[0]] : [];
+  const candidates: unknown[] = Array.isArray(value) ? value : value == null ? [] : [value];
+  const out: StreamProviderName[] = [];
+  for (const candidate of candidates) {
+    if (isStreamProviderName(candidate) && isStreamProviderEnabled(candidate)) {
+      if (!out.includes(candidate)) out.push(candidate);
+    }
+  }
+  return out.length > 0 ? out : fallback;
 }

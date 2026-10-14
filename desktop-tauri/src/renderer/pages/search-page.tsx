@@ -31,7 +31,12 @@ import {
   type SearchFilterDefinition,
   type SearchFilterValues,
 } from "@/shared/search-filters";
-import { ShowSearchResult } from "@/shared/types";
+import {
+  STREAM_PROVIDER_LABELS,
+  getEnabledStreamProviders,
+  normalizeEnabledStreamProviders,
+} from "@/shared/stream-providers";
+import { ShowSearchResult, type StreamProvider } from "@/shared/types";
 
 import { Badge } from "../components/ui/badge";
 
@@ -52,11 +57,59 @@ function getAvailabilityLabel(show: ShowSearchResult): string {
   return "sub";
 }
 
+function showProviderName(show: ShowSearchResult, fallback: StreamProvider): StreamProvider {
+  return show.provider ?? fallback;
+}
+
+function showProviderBadge(show: ShowSearchResult, fallback: StreamProvider): React.ReactNode {
+  const provider = showProviderName(show, fallback);
+  const label = STREAM_PROVIDER_LABELS[provider] ?? provider;
+  return (
+    <Badge variant="glass" className="text-white flex items-center gap-1 align-middle">
+      {label}
+    </Badge>
+  );
+}
 function displayTitle(show: ShowSearchResult): string {
   return show.title.english ?? show.title.romanji ?? show.title.native ?? show.providerId;
 }
 
-function showAvailabilityBadges(show: ShowSearchResult): React.ReactNode {
+function formatCount(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(n);
+}
+
+function isLiveProvider(show: ShowSearchResult, fallback: StreamProvider): boolean {
+  const p = show.provider ?? fallback;
+  return p === "twitch" || p === "youtube";
+}
+
+function showSubtitle(show: ShowSearchResult, fallback: StreamProvider): string {
+  if (isLiveProvider(show, fallback)) {
+    const views = show.views ?? show.viewerCount ?? 0;
+    const live = show.isLive ?? show.type === "LIVE" ?? false;
+    const count = live ? `${formatCount(views)} watching` : `${formatCount(views)} views`;
+    return show.category ? `${count} · ${show.category}` : count;
+  }
+  return `Episode ${show.availableEpisodes?.sub ?? 0} · ${getAvailabilityLabel(show)}`;
+}
+
+function showAvailabilityBadges(
+  show: ShowSearchResult,
+  fallback: StreamProvider
+): React.ReactNode {
+  const provider = show.provider ?? fallback;
+  if (provider === "twitch" || provider === "youtube") {
+    const live = show.isLive ?? show.type === "LIVE" ?? false;
+    if (!live) return undefined;
+    return (
+      <Badge variant="glass" className="text-white flex items-center gap-1 align-middle">
+        LIVE
+      </Badge>
+    );
+  }
   const subCount = show.availableEpisodes?.sub ?? 0;
   const dubCount = show.availableEpisodes?.dub ?? 0;
   if (subCount === 0 && dubCount === 0) return undefined;
@@ -150,6 +203,10 @@ export function SearchPage() {
   const [filterDefs, setFilterDefs] = useState<SearchFilterDefinition[]>([]);
   const [filters, setFilters] = useState<SearchFilterValues>({});
   const [filtersReady, setFiltersReady] = useState(false);
+  const [enabledProviders, setEnabledProviders] = useState<StreamProvider[]>(() =>
+    normalizeEnabledStreamProviders(getEnabledStreamProviders()[0])
+  );
+  const [providerFilter, setProviderFilter] = useState<"all" | StreamProvider>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -174,10 +231,39 @@ export function SearchPage() {
   }, []);
 
   const { results, loading, error } = useWelcomeSearch(debouncedQuery, {
-    // Wait for provider filter defs so the first search isn't unfiltered then filtered.
-    loadLatestWhenEmpty: filtersReady,
+    // Don't auto-load 36 posters on mount — that burst decodes all covers at
+    // once and freezes WebKitGTK. Search only after the user types.
+    loadLatestWhenEmpty: false,
     filters: filtersReady ? filters : undefined,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = normalizeEnabledStreamProviders(getEnabledStreamProviders()[0]);
+    void window.streamProvider
+      .getEnabledProviders()
+      .then(
+        (providers) => {
+          if (!cancelled) setEnabledProviders(normalizeEnabledStreamProviders(providers));
+        },
+        () => {
+          if (!cancelled) setEnabledProviders(fallback);
+        }
+      )
+      .catch(() => {
+        if (!cancelled) setEnabledProviders(fallback);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const fallbackProvider = enabledProviders[0] ?? getEnabledStreamProviders()[0];
+
+  const visibleResults = useMemo(() => {
+    if (providerFilter === "all") return results;
+    return results.filter((show) => showProviderName(show, fallbackProvider) === providerFilter);
+  }, [results, providerFilter, fallbackProvider]);
 
   const setFilterValue = useCallback((key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -185,15 +271,20 @@ export function SearchPage() {
 
   const openShow = useCallback(
     (show: ShowSearchResult) => {
-      navigate(`/show/${show.id}?providerId=${encodeURIComponent(show.providerId)}`, {
-        state: { anime: show },
-      });
+      const provider = show.provider ?? fallbackProvider;
+      navigate(
+        `/show/${show.id}?providerId=${encodeURIComponent(show.providerId)}&provider=${encodeURIComponent(provider)}`,
+        {
+          state: { anime: show },
+        }
+      );
     },
-    [navigate]
+    [navigate, fallbackProvider]
   );
 
   const clearAll = useCallback(() => {
     setQuery("");
+    setProviderFilter("all");
     setFilters(defaultSearchFilterValues(filterDefs));
   }, [filterDefs]);
 
@@ -217,12 +308,36 @@ export function SearchPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             <Input
               type="text"
-              placeholder="Search"
+              placeholder="Search across all enabled providers"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="pl-9 h-10"
             />
           </div>
+
+          <Select
+            value={providerFilter}
+            onValueChange={(v) => setProviderFilter(v as "all" | StreamProvider)}
+          >
+            <SelectTrigger
+              className={`${SEARCH_SELECT_TRIGGER_CLASS} xl:w-[220px] xl:shrink-0`}
+              aria-label="Filter by provider"
+            >
+              <SelectValue placeholder="All providers">
+                {providerFilter === "all"
+                  ? "All providers"
+                  : (STREAM_PROVIDER_LABELS[providerFilter] ?? providerFilter)}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent className={SEARCH_SELECT_CONTENT_CLASS}>
+              <SelectItem value="all">All providers</SelectItem>
+              {enabledProviders.map((provider) => (
+                <SelectItem key={provider} value={provider}>
+                  {STREAM_PROVIDER_LABELS[provider] ?? provider}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {hasFilters && (
             <div className="flex flex-wrap gap-2 items-center xl:flex-nowrap">
@@ -282,22 +397,33 @@ export function SearchPage() {
 
       {loading && !error && <SearchGridSkeleton />}
 
-      {!loading && !error && results.length > 0 && (
+      {!loading && !error && visibleResults.length > 0 && (
         <ShowGrid
-          items={results.map((show) => ({
-            id: `${show.id}-${show.providerId}`,
+          items={visibleResults.map((show) => ({
+            id: `${show.id}-${show.providerId}-${showProviderName(show, fallbackProvider)}`,
             rating: show.score,
             coverUrl: show.thumbnail,
             title: displayTitle(show),
-            subtitle: `Episode ${show.availableEpisodes?.sub ?? 0} · ${getAvailabilityLabel(show)}`,
-            badges: showAvailabilityBadges(show),
+            subtitle: showSubtitle(show, fallbackProvider),
+            badges: (
+              <>
+                {showProviderBadge(show, fallbackProvider)}
+                {showAvailabilityBadges(show, fallbackProvider)}
+              </>
+            ),
             onClick: () => openShow(show),
           }))}
         />
       )}
 
-      {!loading && !error && results.length === 0 && (
-        <p className="text-muted-foreground text-sm">No results found.</p>
+      {!loading && !error && visibleResults.length === 0 && (
+        <p className="text-muted-foreground text-sm">
+          {debouncedQuery.trim()
+            ? providerFilter === "all"
+              ? "No results found."
+              : `No results found for ${STREAM_PROVIDER_LABELS[providerFilter] ?? providerFilter}.`
+            : "Type at least 2 characters to search."}
+        </p>
       )}
     </div>
   );

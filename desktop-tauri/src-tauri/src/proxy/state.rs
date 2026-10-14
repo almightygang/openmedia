@@ -14,11 +14,11 @@ use super::hls::upstream_target_id;
 pub const CHROME_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 pub const HLS_SEGMENT_DURATION_SECONDS: u64 = 6;
-pub const SEGMENT_WAIT_TIMEOUT_MS: u64 = 60_000;
+pub const SEGMENT_WAIT_TIMEOUT_MS: u64 = 45_000;
 pub const SEGMENT_RESTART_FORWARD_TOLERANCE: u64 = 15;
-pub const PROBE_TIMEOUT_MS: u64 = 25_000;
-pub const PLAYLIST_PROBE_TIMEOUT_MS: u64 = 20_000;
-pub const FIRST_SEGMENT_WAIT_MS: u64 = 90_000;
+pub const PROBE_TIMEOUT_MS: u64 = 15_000;
+pub const PLAYLIST_PROBE_TIMEOUT_MS: u64 = 12_000;
+pub const FIRST_SEGMENT_WAIT_MS: u64 = 45_000;
 pub const TRANSCODE_CACHE_VERSION: &str = "v4";
 pub const SAME_START_FAILURE_COOLDOWN_MS: u64 = 5000;
 pub const ENSURE_SEGMENT_MAX_RESTART_RETRIES: u32 = 6;

@@ -26,7 +26,7 @@ npm run tauri:dev
 
 ```bash
 npm run build              # vite frontend -> dist/
-npm run tauri:build        # deb, rpm, AppImage, nsis
+npm run tauri:build        # AppImage only (fast); use tauri:build:linux / :all for more bundles
 ```
 
 ## Status

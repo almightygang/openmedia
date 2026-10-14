@@ -1,33 +1,44 @@
-//! Stream providers — AnimeParadise only.
+//! Stream providers — AnimeParadise + live (Twitch GQL-only, YouTube InnerTube).
 //!
-//! The other six upstreams (HiAnime, AllAnime, AniDB, AnimePahe, ReAnime,
-//! Senshi) were removed: none resolves a playable stream in this build
-//! (Cloudflare gates, site migrations, dead crypto handshakes, or WASM-only
-//! decryptors). See README for the per-provider verdicts.
+//! AnimeParadise remains the only anime VOD upstream (the other six were
+//! removed: Cloudflare gates, site migrations, dead crypto, WASM-only
+//! decryptors). Twitch resolves anonymously via public GQL + Usher (no
+//! developer registration); YouTube via anonymous InnerTube player.
+//! Kick is intentionally skipped (home page stays "coming soon").
 
 pub mod animeparadise;
 pub mod framework;
+pub mod hls;
+pub mod twitch;
+pub mod youtube;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 pub use framework::ProviderContext;
 
-/// The sole provider, matching `streamProviders` in `stream-provider.ts`.
+/// All known provider names in priority order.
+pub const KNOWN_PROVIDERS: &[&str] = &["animeparadise", "twitch", "youtube"];
+
+/// The provider registry, matching `streamProviders` in `stream-provider.ts`.
 pub struct Providers {
     pub animeparadise: animeparadise::AnimeParadiseProvider,
+    pub twitch: twitch::TwitchProvider,
+    pub youtube: youtube::YouTubeProvider,
 }
 
 impl Providers {
     pub fn new(ctx: ProviderContext) -> Self {
         Self {
-            animeparadise: animeparadise::AnimeParadiseProvider::new(ctx),
+            animeparadise: animeparadise::AnimeParadiseProvider::new(ctx.clone()),
+            twitch: twitch::TwitchProvider::new(ctx.clone()),
+            youtube: youtube::YouTubeProvider::new(ctx),
         }
     }
 }
 
 pub fn is_known(name: &str) -> bool {
-    name == "animeparadise"
+    KNOWN_PROVIDERS.contains(&name)
 }
 
 pub fn resolve_provider(requested: Option<&str>, stored: Option<&str>) -> String {
@@ -37,6 +48,21 @@ pub fn resolve_provider(requested: Option<&str>, stored: Option<&str>) -> String
         }
     }
     "animeparadise".to_string()
+}
+
+/// Resolve the full enabled set, preserving priority order.
+/// Unknown names are dropped; empty input falls back to the default provider.
+pub fn resolve_providers(candidates: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in candidates {
+        if is_known(name.as_str()) && !out.iter().any(|n| n == name) {
+            out.push(name.clone());
+        }
+    }
+    if out.is_empty() {
+        out.push("animeparadise".to_string());
+    }
+    out
 }
 
 /// In-memory per-key TTL cache shared by providers.

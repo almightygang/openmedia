@@ -25,6 +25,7 @@ type HorizontalCarouselProps = {
 
 export function HorizontalCarousel({ items, children, pageSize = 6 }: HorizontalCarouselProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rafRef = useRef(0);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
@@ -36,6 +37,14 @@ export function HorizontalCarousel({ items, children, pageSize = 6 }: Horizontal
     setCanScrollLeft(left > 0);
     setCanScrollRight(left < maxScrollLeft - 1);
   }, []);
+
+  const onScroll = useCallback(() => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      updateScrollState();
+    });
+  }, [updateScrollState]);
 
   const scrollByPage = useCallback(
     (direction: "left" | "right") => {
@@ -66,7 +75,10 @@ export function HorizontalCarousel({ items, children, pageSize = 6 }: Horizontal
   useEffect(() => {
     updateScrollState();
     window.addEventListener("resize", updateScrollState);
-    return () => window.removeEventListener("resize", updateScrollState);
+    return () => {
+      window.removeEventListener("resize", updateScrollState);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, [updateScrollState, itemCount]);
 
   return (
@@ -74,8 +86,8 @@ export function HorizontalCarousel({ items, children, pageSize = 6 }: Horizontal
       <div className="relative w-full">
         <div
           ref={scrollRef}
-          onScroll={updateScrollState}
-          className="flex gap-3 overflow-x-auto pb-2 scroll-smooth px-8 scrollbar-none -mx-8"
+          onScroll={onScroll}
+          className="flex gap-3 overflow-x-auto pb-2 px-8 scrollbar-none -mx-8"
         >
           {items ? items.map((item) => <ShowCard key={item.id} item={item} />) : children}
         </div>
@@ -85,7 +97,7 @@ export function HorizontalCarousel({ items, children, pageSize = 6 }: Horizontal
             type="button"
             aria-label="Scroll left"
             onClick={() => scrollByPage("left")}
-            className="absolute left-2 top-[calc(50%)] -translate-y-1/2 z-10 inline-flex h-12 w-8 items-center justify-center rounded-md bg-background/80 border border-border shadow-sm backdrop-blur hover:bg-background transition-colors"
+            className="absolute left-2 top-[calc(50%)] -translate-y-1/2 z-10 inline-flex h-12 w-8 items-center justify-center rounded-md bg-background/80 border border-border shadow-sm hover:bg-background transition-colors"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -96,7 +108,7 @@ export function HorizontalCarousel({ items, children, pageSize = 6 }: Horizontal
             type="button"
             aria-label="Scroll right"
             onClick={() => scrollByPage("right")}
-            className="absolute right-2 top-[calc(50%)] -translate-y-1/2 z-10 inline-flex h-12 w-8 items-center justify-center rounded-md bg-background/80 border border-border shadow-sm backdrop-blur hover:bg-background transition-colors"
+            className="absolute right-2 top-[calc(50%)] -translate-y-1/2 z-10 inline-flex h-12 w-8 items-center justify-center rounded-md bg-background/80 border border-border shadow-sm hover:bg-background transition-colors"
           >
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>

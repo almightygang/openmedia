@@ -38,6 +38,8 @@ export type EpisodeCardProps = {
   className?: string;
   /** `carousel`: fixed width and `data-carousel-item` for horizontal scroll rows. */
   layout?: "grid" | "carousel";
+  /** Tile shape: portrait posters (anime) or 16:9 landscape (live/video). */
+  orientation?: "portrait" | "landscape";
   /** When set, shows a glass badge top-right: `24:00`, or `12:34/24:00` if `currentDurationMs` is also set. */
   totalDurationMs?: number;
   currentDurationMs?: number;
@@ -52,6 +54,7 @@ export function EpisodeCard({
   disabled,
   className,
   layout = "grid",
+  orientation = "portrait",
   totalDurationMs,
   currentDurationMs,
 }: EpisodeCardProps) {
@@ -70,14 +73,16 @@ export function EpisodeCard({
       {...(layout === "carousel" ? { "data-carousel-item": true } : {})}
       className={cn(
         "group text-left focus-visible:outline-none disabled:opacity-60",
-        layout === "carousel" && "flex-shrink-0 w-60 sm:w-72",
+        layout === "carousel" &&
+          (orientation === "landscape" ? "flex-shrink-0 w-72 sm:w-80" : "flex-shrink-0 w-60 sm:w-72"),
         layout === "grid" && "w-full",
         className
       )}
     >
       <div
         className={cn(
-          "relative w-full rounded-2xl border-2 border-border p-[3px] box-border transition-all group-hover:border-primary/80 group-hover:shadow-[0_0_0_1px_rgba(129,140,248,0.7)] group-focus-visible:border-primary/80 group-focus-visible:shadow-[0_0_0_1px_rgba(129,140,248,0.7)] h-40"
+          "relative w-full rounded-2xl border-2 border-border p-[3px] box-border transition-all group-hover:border-primary/80 group-hover:shadow-[0_0_0_1px_rgba(129,140,248,0.7)] group-focus-visible:border-primary/80 group-focus-visible:shadow-[0_0_0_1px_rgba(129,140,248,0.7)]",
+          orientation === "landscape" ? "aspect-video" : "h-40"
         )}
       >
         <div className="relative h-full w-full overflow-hidden rounded-lg bg-muted">
@@ -86,6 +91,8 @@ export function EpisodeCard({
               src={thumbnailUrl}
               alt=""
               draggable={false}
+              loading="lazy"
+              decoding="async"
               className="h-full w-full object-cover"
             />
           ) : (

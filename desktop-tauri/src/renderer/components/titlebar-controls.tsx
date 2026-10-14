@@ -9,8 +9,9 @@ import { Separator } from "@/renderer/components/ui/separator";
 import { cn } from "@/renderer/lib/utils";
 
 import { TitlebarNavSearchHelper } from "./titlebar-nav-search-helper";
+import { handleTitlebarMouseDown } from "./titlebar-drag";
 
-export function WindowsTitlebar({
+export function ControlsTitlebar({
   children,
   className,
 }: {
@@ -28,13 +29,17 @@ export function WindowsTitlebar({
   }, []);
 
   return (
-    <div className={cn("flex w-screen min-h-12 fixed z-10 bg-background draglayer", className)}>
-      <div className="flex items-center px-2 w-full">
+    <div
+      data-tauri-drag-region
+      onMouseDown={handleTitlebarMouseDown}
+      className={cn("flex w-screen min-h-12 fixed z-10 bg-background draglayer", className)}
+    >
+      <div className="flex items-center gap-2 px-2 w-full">
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="flex items-center gap-2 clickable px-2"
+          className="flex shrink-0 items-center gap-2 clickable px-2"
           onClick={() => navigate("/")}
         >
           <img
@@ -52,13 +57,13 @@ export function WindowsTitlebar({
           <span className="text-xs font-semibold tracking-tight">Openanime</span>
         </Button>
 
-        <Separator orientation="vertical" className="h-4" />
+        <Separator orientation="vertical" className="h-4 shrink-0" />
 
         <TitlebarNavSearchHelper />
 
         {children}
 
-        <div className="flex flex-auto justify-end items-center gap-2">
+        <div className="flex flex-auto shrink-0 justify-end items-center gap-2">
           <div className="flex items-center gap-1">
             <Button
               type="button"

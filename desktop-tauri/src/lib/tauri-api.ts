@@ -23,6 +23,7 @@ export function installTauriBridge() {
     close: () => invoke("window_close"),
     toggleMaximize: () => invoke("window_toggle_maximize"),
     isMaximized: () => invoke("window_is_maximized"),
+    startDragging: () => invoke("window_start_dragging"),
   };
 
   g.urlOpener = {
@@ -59,6 +60,9 @@ export function installTauriBridge() {
     getActiveProvider: () => invoke("stream_provider_active_get"),
     setActiveProvider: (provider: string) =>
       invoke("stream_provider_active_set", { provider }),
+    getEnabledProviders: () => invoke("stream_provider_enabled_list"),
+    setEnabledProviders: (providers: string[]) =>
+      invoke("stream_provider_enabled_set", { providers }),
     search: (query: string, filters?: unknown) =>
       invoke("stream_provider_search", { query, filters: filters ?? null }),
     getSearchFilters: () => invoke("stream_provider_search_filters"),
@@ -82,6 +86,18 @@ export function installTauriBridge() {
         mode: mode ?? "sub",
         providerOverride: providerName ?? null,
       }),
+    getStreamQualityUrl: (
+      providerId: string | null,
+      episode: string,
+      quality: string,
+      providerName?: string,
+    ) =>
+      invoke("stream_provider_quality_url", {
+        providerId,
+        episode,
+        quality,
+        providerOverride: providerName ?? null,
+      }),
     getStreamProxyBaseUrl: () => invoke("stream_provider_proxy_base"),
     prepareTranscodedStream: (targetUrl: string, referer: string | null, variant?: string | null) =>
       invoke("stream_provider_prepare_transcode", {
@@ -99,13 +115,19 @@ export function installTauriBridge() {
         targetUrl,
         variant: variant ?? null,
       }),
+    getFfmpegStatus: () => invoke("stream_provider_ffmpeg_status"),
+    getTranscodeLastError: (targetUrl: string, variant?: string | null) =>
+      invoke("stream_provider_transcode_last_error", {
+        targetUrl,
+        variant: variant ?? null,
+      }),
     getShowDetails: (providerId: string, providerName?: string) =>
       invoke("stream_provider_show_details", {
         providerId,
         providerOverride: providerName ?? null,
       }),
-    getRecentUploads: (page: number, limit?: number) =>
-      invoke("stream_provider_recent_uploads", { page, limit: limit ?? null }),
+    getRecentUploads: (page: number, limit?: number, provider?: string) =>
+      invoke("stream_provider_recent_uploads", { page, limit: limit ?? null, provider: provider ?? null }),
   };
 
   g.anilist = {

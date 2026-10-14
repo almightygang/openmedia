@@ -11,7 +11,11 @@
     "tauri": "tauri",
     "download-ffmpeg": "node ./scripts/download-ffmpeg.mjs",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --bundles deb,rpm,appimage,nsis"
+    "tauri:build": "tauri build --bundles appimage",
+    "tauri:build:appimage": "tauri build --bundles appimage",
+    "tauri:build:deb": "tauri build --bundles deb",
+    "tauri:build:linux": "tauri build --bundles deb,appimage",
+    "tauri:build:all": "tauri build --bundles deb,rpm,appimage,nsis"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.3",

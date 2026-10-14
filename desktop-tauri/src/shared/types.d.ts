@@ -12,7 +12,7 @@ interface ThemeContext {
 
 type StreamMode = "sub" | "dub";
 
-type StreamProvider = "animeparadise";
+type StreamProvider = "animeparadise" | "twitch" | "youtube";
 
 interface Show {
   id: string;
@@ -38,6 +38,8 @@ interface Bookmark {
 interface ShowSearchResult {
   id: string;
   providerId: string;
+  /** Source provider name (tagged by the backend when merging multi-provider results). */
+  provider?: StreamProvider;
   title: {
     english?: string;
     romanji?: string;
@@ -53,6 +55,14 @@ interface ShowSearchResult {
   status?: string;
   type?: string;
   episodeDuration?: number;
+  /** Live/video providers: viewers or views (replaces episode counts). */
+  viewerCount?: number;
+  views?: number;
+  isLive?: boolean;
+  category?: string;
+  channelName?: string;
+  startedAt?: string;
+  profileImage?: string | null;
   season?: {
     quarter?: string;
     year?: number;
@@ -62,6 +72,8 @@ interface ShowSearchResult {
 interface Episode {
   id: string;
   providerId: string;
+  /** Source provider name (tagged by the backend when merging multi-provider results). */
+  provider?: StreamProvider;
   title: {
     english?: string;
     romanji?: string;
@@ -70,6 +82,14 @@ interface Episode {
   thumbnail: string | null;
   index: number;
   mode: StreamMode;
+  /** Raw episode token as returned by the provider (e.g. "live", a video id).
+   *  `index` is numeric-only; non-numeric episodes would otherwise become NaN. */
+  token?: string;
+  /** Live/video providers: viewers or views (replaces episode numbers). */
+  viewerCount?: number;
+  views?: number;
+  isLive?: boolean;
+  category?: string;
 }
 
 interface StreamQualityOption {
@@ -91,6 +111,8 @@ interface StreamUrlResult {
   qualities?: StreamQualityOption[];
   selectedQuality?: string;
   anilistMediaId?: number;
+  /** Total media length in ms (YouTube VODs), for players that report none. */
+  durationMs?: number | null;
 }
 
 interface TranscodeProgressResult {
@@ -107,6 +129,11 @@ interface ShowDetails {
   type: string;
   description?: string | null;
   anilistId?: string | null;
+  viewerCount?: number;
+  views?: number;
+  isLive?: boolean;
+  category?: string;
+  profileImage?: string | null;
 }
 
 export interface AniListShowDetails {
@@ -349,6 +376,8 @@ interface WindowControlsContext {
   close: () => Promise<void>;
   toggleMaximize: () => Promise<boolean>;
   isMaximized: () => Promise<boolean>;
+  /** Manual drag fallback for setups where data-tauri-drag-region is ignored. */
+  startDragging: () => Promise<void>;
 }
 
 export interface UrlOpenerContext {
@@ -356,8 +385,12 @@ export interface UrlOpenerContext {
 }
 
 interface StreamProviderContext {
+  /** @deprecated Use getEnabledProviders; kept for back-compat (returns preferred provider). */
   getActiveProvider: () => Promise<StreamProvider>;
+  /** @deprecated Use setEnabledProviders; kept for back-compat. */
   setActiveProvider: (provider: StreamProvider) => Promise<StreamProvider>;
+  getEnabledProviders: () => Promise<StreamProvider[]>;
+  setEnabledProviders: (providers: StreamProvider[]) => Promise<StreamProvider[]>;
   search: (query: string, filters?: SearchFilterValues) => Promise<ShowSearchResult[]>;
   getSearchFilters: () => Promise<SearchFilterDefinition[]>;
   getEpisodes: (
@@ -372,6 +405,13 @@ interface StreamProviderContext {
     mode?: "sub" | "dub",
     providerName?: StreamProvider
   ) => Promise<StreamUrlResult>;
+  /** Re-resolve an open stream at a different quality (Twitch/YouTube progressive). */
+  getStreamQualityUrl?: (
+    providerId: string | null,
+    episode: string,
+    quality: string,
+    providerName?: StreamProvider
+  ) => Promise<StreamUrlResult>;
   getStreamProxyBaseUrl: () => Promise<string>;
   prepareTranscodedStream: (
     targetUrl: string,
@@ -383,8 +423,13 @@ interface StreamProviderContext {
     targetUrl: string,
     variant?: string | null
   ) => Promise<TranscodeProgressResult>;
+  getFfmpegStatus: () => Promise<{ available: boolean; path: string | null }>;
+  getTranscodeLastError: (
+    targetUrl: string,
+    variant?: string | null
+  ) => Promise<{ progress: TranscodeProgressResult; stderrTail: string }>;
   getShowDetails: (providerId: string, providerName?: StreamProvider) => Promise<ShowDetails>;
-  getRecentUploads: (page: number, limit?: number) => Promise<Episode[]>;
+  getRecentUploads: (page: number, limit?: number, provider?: StreamProvider) => Promise<Episode[]>;
 }
 
 export interface AniListContext {

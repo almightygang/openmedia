@@ -24,3 +24,12 @@ pub async fn window_toggle_maximize(window: tauri::Window) -> Result<bool, Strin
 pub async fn window_is_maximized(window: tauri::Window) -> Result<bool, String> {
     window.is_maximized().map_err(|e| e.to_string())
 }
+
+/// Manual drag fallback for the custom titlebar. `data-tauri-drag-region`
+/// covers most setups, but WebView drag regions are unreliable on some
+/// Linux builds — the frontend calls this from a mousedown handler on
+/// non-interactive titlebar areas instead.
+#[tauri::command]
+pub async fn window_start_dragging(window: tauri::Window) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
+}

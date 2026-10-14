@@ -17,7 +17,10 @@ import { isHlsPlaylistUrl } from "@/shared/utils/hls-url";
 import { type RichShowDetails, useShowDetails } from "../hooks/use-show-details";
 
 /** How many automatic reconnects after a playback error before showing the manual overlay. */
-const MAX_AUTO_RECONNECT = 5;
+const MAX_AUTO_RECONNECT = 3;
+
+/** Frontend guard so a wedged backend can't leave the UI on "Preparing..." forever. */
+const PREPARE_TIMEOUT_MS = 60_000;
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 const ENABLE_HLS_SERVER_TRANSCODE = true;
@@ -28,8 +31,17 @@ function logPlaybackFailure(event: string, meta?: Record<string, unknown>): void
   console.error(`[watch-playback] ${event}${suffix}`);
 }
 
-function shouldUseServerTranscode(streamUrl: string): boolean {
+function shouldUseServerTranscode(streamUrl: string, provider?: string): boolean {
   if (!ENABLE_HLS_SERVER_TRANSCODE) return false;
+  // Twitch resolves to already-playable live HLS; ffmpeg only adds latency
+  // and races expiring signed segment URLs.
+  if (provider === "twitch") return false;
+  if (provider === "youtube") {
+    // Live HLS plays direct; progressive MP4 VODs go through the remux
+    // pipeline so the player gets exact duration + full seeking (native
+    // MP4 often reports unknown length, clamping seeks to buffered ranges).
+    return !isHlsPlaylistUrl(streamUrl);
+  }
   return isHlsPlaylistUrl(streamUrl);
 }
 
@@ -69,7 +81,8 @@ function buildWatchHistoryEntry(
   showDetails: RichShowDetails | null,
   mode: Episode["mode"]
 ): HistoryEntry {
-  const index = Number(ep);
+  const parsed = Number(ep);
+  const index = Number.isFinite(parsed) ? parsed : (episode.index ?? 0);
   const richList = showDetails?.episodes[mode] ?? [];
   const rich = richList.find((e) => e.index === index);
   const thumb =
@@ -81,6 +94,7 @@ function buildWatchHistoryEntry(
     episode: {
       ...episode,
       index,
+      token: ep,
       title: {
         english: showDetails?.title.english ?? episode.title.english,
         romanji: showDetails?.title.romaji ?? episode.title.romanji,
@@ -101,6 +115,29 @@ interface WatchState {
   resumeFromMs?: number;
   /** Optional stream provider override for this watch session only. */
   providerOverride?: HistoryEntry["provider"];
+}
+
+type WatchKind = "anime" | "live" | "video";
+
+function resolveWatchKind(
+  episode: Episode | undefined,
+  providerOverride: HistoryEntry["provider"] | undefined,
+  showIsLive?: boolean | null
+): WatchKind {
+  const provider = providerOverride ?? episode?.provider;
+  if (provider === "twitch") return "live";
+  if (provider === "youtube") {
+    const live = showIsLive ?? episode?.isLive ?? false;
+    return live ? "live" : "video";
+  }
+  return "anime";
+}
+
+/** Raw provider episode token ("live", video id, "3") — never Number()-ed. */
+function episodeToken(episode: Episode): string {
+  if (episode.token != null && episode.token !== "") return episode.token;
+  if (Number.isFinite(episode.index)) return String(episode.index);
+  return "";
 }
 
 export function WatchPage() {
@@ -124,6 +161,8 @@ export function WatchPage() {
   const [selectedQuality, setSelectedQuality] = useState<string | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [loadingEpisode, setLoadingEpisode] = useState(false);
+  /** Backend-reported total length (YouTube VODs) when the element reports none. */
+  const streamDurationMsRef = useRef<number | null>(null);
   const [transcodeProgress, setTranscodeProgress] = useState<{
     active: boolean;
     progressPercent: number | null;
@@ -131,6 +170,9 @@ export function WatchPage() {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const episode = state?.episode;
+  // Home rows carry no explicit override — fall back to the row's own tagged
+  // provider so Twitch/YouTube entries don't resolve against AnimeParadise.
+  const activeProvider = streamProviderOverride ?? episode?.provider;
 
   const {
     details: showDetails,
@@ -140,11 +182,14 @@ export function WatchPage() {
   } = useShowDetails(
     disabledHistoryProvider ? undefined : episode?.id,
     disabledHistoryProvider ? undefined : episode?.providerId,
-    disabledHistoryProvider ? undefined : streamProviderOverride
+    disabledHistoryProvider ? undefined : activeProvider
   );
 
   const [currentEpisode, setCurrentEpisode] = useState<number>(() => episode?.index ?? 1);
+  const [currentToken, setCurrentToken] = useState<string>(() => (episode ? episodeToken(episode) : ""));
   const [playbackMode, setPlaybackMode] = useState<Episode["mode"]>(() => episode?.mode ?? "sub");
+  const kind: WatchKind = resolveWatchKind(episode, activeProvider, showDetails?.isLive);
+  const isLiveKind = kind !== "anime";
   const playbackModeRef = useRef(playbackMode);
   playbackModeRef.current = playbackMode;
 
@@ -247,6 +292,8 @@ export function WatchPage() {
     let totalMs = base.totalDurationMs;
     if (Number.isFinite(video.duration) && video.duration > 0) {
       totalMs = Math.floor(video.duration * 1000);
+    } else if (streamDurationMsRef.current != null && streamDurationMsRef.current > 0) {
+      totalMs = streamDurationMsRef.current;
     }
     const next: HistoryEntry = {
       ...base,
@@ -307,7 +354,9 @@ export function WatchPage() {
       setPlaybackMode(mode);
       activeLoadTokenRef.current += 1;
       const loadToken = activeLoadTokenRef.current;
-      setCurrentEpisode(Number(ep));
+      const parsedEp = Number(ep);
+      setCurrentEpisode(Number.isFinite(parsedEp) ? parsedEp : 0);
+      setCurrentToken(ep);
       setPlayUrl("");
       lastHistoryEntryRef.current = null;
       clearReconnectTimeout();
@@ -342,13 +391,18 @@ export function WatchPage() {
           qualities,
           selectedQuality: defaultQuality,
           anilistMediaId,
+          durationMs,
         } = await window.streamProvider.getStreamUrl(
           episode.id,
           episode.providerId,
           ep,
           mode,
-          streamProviderOverride
+          activeProvider
         );
+        streamDurationMsRef.current =
+          typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs > 0
+            ? Math.floor(durationMs)
+            : null;
         if (anilistMediaId != null && Number.isInteger(anilistMediaId) && anilistMediaId > 0) {
           const prev = anilistListRef.current;
           if (prev?.mediaId !== anilistMediaId) {
@@ -356,7 +410,10 @@ export function WatchPage() {
           }
         }
         historyProviderRef.current =
-          streamProviderOverride ?? (await window.streamProvider.getActiveProvider());
+          streamProviderOverride ??
+          episode.provider ??
+          (await window.streamProvider.getEnabledProviders()).at(0) ??
+          (await window.streamProvider.getActiveProvider());
         const base = await window.streamProvider.getStreamProxyBaseUrl();
         setSubtitleTracks(proxySubtitleTracks(base, referer, subtitles));
         const qualityOptions = qualities ?? [];
@@ -367,7 +424,7 @@ export function WatchPage() {
         setStreamQualities(qualityOptions);
         setSelectedQuality(variant);
         activeStreamRef.current = { url, referer };
-        const shouldTranscode = shouldUseServerTranscode(url);
+        const shouldTranscode = shouldUseServerTranscode(url, activeProvider);
         if (shouldTranscode) {
           activeTranscodeUrlRef.current = url;
           activeTranscodeVariantRef.current = variant;
@@ -397,7 +454,27 @@ export function WatchPage() {
             void pollProgress();
           }, 500);
           try {
-            await window.streamProvider.prepareTranscodedStream(url, referer, variant);
+            const prepare = window.streamProvider.prepareTranscodedStream(url, referer, variant);
+            const timeout = new Promise<never>((_, reject) => {
+              setTimeout(
+                () => reject(new Error("Timed out preparing the stream (60s). The server may still be transcoding — try again.")),
+                PREPARE_TIMEOUT_MS
+              );
+            });
+            await Promise.race([prepare, timeout]);
+          } catch (prepareErr) {
+            stopPolling = true;
+            clearInterval(progressInterval);
+            if (activeLoadTokenRef.current !== loadToken) {
+              return;
+            }
+            // Don't leave a wedged job running behind an error screen.
+            if (activeTranscodeUrlRef.current === url) {
+              activeTranscodeUrlRef.current = null;
+              activeTranscodeVariantRef.current = null;
+              void window.streamProvider.cancelTranscodedStream(url, variant);
+            }
+            throw prepareErr;
           } finally {
             stopPolling = true;
             clearInterval(progressInterval);
@@ -438,10 +515,21 @@ export function WatchPage() {
           null,
           mode
         );
-        void syncAniListProgress(Number(ep));
+        const epNum = Number(ep);
+        // Live/video providers are not anime: never sync them to AniList
+        // (Number("live") is NaN and YouTube ids are not AniList media).
+        if (activeProvider !== "twitch" && activeProvider !== "youtube" && Number.isFinite(epNum)) {
+          void syncAniListProgress(epNum);
+        }
       } catch (err) {
         if (activeLoadTokenRef.current !== loadToken) return;
-        setError(err instanceof Error ? err.message : "Failed to load stream");
+        const raw = err instanceof Error ? err.message : "Failed to load stream";
+        const hint = /ffmpeg binary unavailable/i.test(raw)
+          ? " (ffmpeg sidecar missing — reinstall the app or put ffmpeg on PATH)"
+          : /first video segment|timed out preparing/i.test(raw)
+            ? " If this repeats, the source may be slow/blocked or ffmpeg failed — Retry, or check logs."
+            : "";
+        setError(`${raw}${hint}`);
       } finally {
         if (activeLoadTokenRef.current === loadToken) {
           setLoadingEpisode(false);
@@ -449,7 +537,7 @@ export function WatchPage() {
         }
       }
     },
-    [episode, clearReconnectTimeout, streamProviderOverride, syncAniListProgress]
+    [episode, clearReconnectTimeout, streamProviderOverride, activeProvider, syncAniListProgress]
   );
 
   useEffect(() => {
@@ -527,6 +615,7 @@ export function WatchPage() {
   useEffect(() => {
     if (!episode) return;
     setCurrentEpisode(episode.index);
+    setCurrentToken(episodeToken(episode));
     playbackModeRef.current = episode.mode;
     setPlaybackMode(episode.mode);
   }, [episode?.id, episode?.providerId, episode?.index, episode?.mode]);
@@ -534,7 +623,7 @@ export function WatchPage() {
   useEffect(() => {
     if (!episode || disabledHistoryProvider) return;
     const resumeFrom = resumeFromMs != null && resumeFromMs > 0 ? resumeFromMs / 1000 : undefined;
-    void loadStream(String(episode.index), resumeFrom != null ? { resumeFrom } : undefined);
+    void loadStream(episodeToken(episode), resumeFrom != null ? { resumeFrom } : undefined);
   }, [
     disabledHistoryProvider,
     episode?.id,
@@ -567,6 +656,8 @@ export function WatchPage() {
     }
     if (video && Number.isFinite(video.duration) && video.duration > 0) {
       entry.totalDurationMs = Math.floor(video.duration * 1000);
+    } else if (streamDurationMsRef.current != null && streamDurationMsRef.current > 0) {
+      entry.totalDurationMs = streamDurationMsRef.current;
     } else if (prev && prev.id === entry.id && prev.totalDurationMs > 0) {
       entry.totalDurationMs = prev.totalDurationMs;
     }
@@ -591,15 +682,17 @@ export function WatchPage() {
   const onEpisodeSelect = useCallback(
     (ep: string, mode?: Episode["mode"]) => {
       const nextMode = mode ?? playbackModeRef.current;
-      if (Number(ep) === currentEpisode && nextMode === playbackModeRef.current) return;
-      setCurrentEpisode(Number(ep));
+      if (ep === currentToken && nextMode === playbackModeRef.current) return;
+      const parsed = Number(ep);
+      setCurrentEpisode(Number.isFinite(parsed) ? parsed : 0);
+      setCurrentToken(ep);
       anilistSyncedEpisodeRef.current = null;
       void (async () => {
         await syncHistoryProgress();
         await loadStream(ep, { mode: nextMode });
       })();
     },
-    [currentEpisode, loadStream, syncHistoryProgress]
+    [currentToken, loadStream, syncHistoryProgress]
   );
 
   const onSidebarSelect = useCallback(
@@ -639,7 +732,63 @@ export function WatchPage() {
         try {
           const { url, referer } = stream;
           const base = await window.streamProvider.getStreamProxyBaseUrl();
-          const shouldTranscode = shouldUseServerTranscode(url);
+          const shouldTranscode = shouldUseServerTranscode(url, activeProvider);
+          const isHls = isHlsPlaylistUrl(url);
+          // Progressive (MP4) sources: each quality is its own URL, so
+          // re-resolve at the requested quality, then remux through the
+          // transcode pipeline (exact duration + full seeking, like anime).
+          if (!isHls && window.streamProvider.getStreamQualityUrl && episode) {
+            const resolved = await window.streamProvider.getStreamQualityUrl(
+              episode.providerId,
+              currentToken || episodeToken(episode),
+              qualityId,
+              activeProvider
+            );
+            if (activeLoadTokenRef.current !== loadToken) return;
+            activeStreamRef.current = {
+              url: resolved.url,
+              referer: resolved.referer,
+            };
+            if (
+              typeof resolved.durationMs === "number" &&
+              Number.isFinite(resolved.durationMs) &&
+              resolved.durationMs > 0
+            ) {
+              streamDurationMsRef.current = Math.floor(resolved.durationMs);
+            }
+            setStreamQualities(resolved.qualities ?? streamQualities);
+            setSelectedQuality(
+              resolved.selectedQuality && (resolved.qualities ?? []).some((q) => q.id === resolved.selectedQuality)
+                ? resolved.selectedQuality
+                : qualityId
+            );
+            activeTranscodeUrlRef.current = resolved.url;
+            activeTranscodeVariantRef.current = null;
+            setTranscodeProgress({
+              active: true,
+              progressPercent: 0,
+              message: "Switching quality...",
+            });
+            await Promise.race([
+              window.streamProvider.prepareTranscodedStream(resolved.url, resolved.referer, null),
+              new Promise<never>((_, reject) => {
+                setTimeout(
+                  () => reject(new Error("Timed out switching quality (60s). Try again.")),
+                  PREPARE_TIMEOUT_MS
+                );
+              }),
+            ]);
+            if (activeLoadTokenRef.current !== loadToken) return;
+            setTranscodeProgress({
+              active: false,
+              progressPercent: 100,
+              message: "Ready to play",
+            });
+            const remuxed = `${base}/transcode/playlist.m3u8?url=${encodeURIComponent(resolved.url)}&referer=${encodeURIComponent(resolved.referer)}`;
+            setPlayUrl(remuxed);
+            setStreamRevision((r) => r + 1);
+            return;
+          }
           if (shouldTranscode) {
             activeTranscodeUrlRef.current = url;
             activeTranscodeVariantRef.current = qualityId;
@@ -648,7 +797,15 @@ export function WatchPage() {
               progressPercent: 0,
               message: "Switching quality...",
             });
-            await window.streamProvider.prepareTranscodedStream(url, referer, qualityId);
+            await Promise.race([
+              window.streamProvider.prepareTranscodedStream(url, referer, qualityId),
+              new Promise<never>((_, reject) => {
+                setTimeout(
+                  () => reject(new Error("Timed out switching quality (60s). Try again.")),
+                  PREPARE_TIMEOUT_MS
+                );
+              }),
+            ]);
             if (activeLoadTokenRef.current !== loadToken) return;
             setTranscodeProgress({
               active: false,
@@ -660,7 +817,9 @@ export function WatchPage() {
           const variantQuery = `&variant=${encodeURIComponent(qualityId)}`;
           const urlWithProxy = shouldTranscode
             ? `${base}/transcode/playlist.m3u8?url=${encodeURIComponent(url)}&referer=${encodeURIComponent(referer)}${variantQuery}`
-            : `${base}/stream/playlist.m3u8?url=${encodeURIComponent(url)}&referer=${encodeURIComponent(referer)}${variantQuery}`;
+            : isHlsPlaylistUrl(url)
+              ? `${base}/stream/playlist.m3u8?url=${encodeURIComponent(url)}&referer=${encodeURIComponent(referer)}${variantQuery}`
+              : `${base}/stream?url=${encodeURIComponent(url)}&referer=${encodeURIComponent(referer)}`;
           if (activeLoadTokenRef.current !== loadToken) return;
           setPlayUrl(urlWithProxy);
           setStreamRevision((r) => r + 1);
@@ -675,11 +834,11 @@ export function WatchPage() {
         }
       })();
     },
-    [selectedQuality]
+    [selectedQuality, episode, episode?.provider, streamProviderOverride, activeProvider, streamQualities]
   );
 
   const retryStream = useCallback(() => {
-    if (!Number.isFinite(currentEpisode)) return;
+    if (!currentToken) return;
     clearReconnectTimeout();
     autoReconnectAttemptRef.current = 0;
     const el = videoRef.current;
@@ -689,8 +848,8 @@ export function WatchPage() {
     setPlayUrl("");
     setPlaybackError(null);
     setError(null);
-    void loadStream(currentEpisode.toString(), resumeFrom != null ? { resumeFrom } : undefined);
-  }, [clearReconnectTimeout, currentEpisode, loadStream]);
+    void loadStream(currentToken, resumeFrom != null ? { resumeFrom } : undefined);
+  }, [clearReconnectTimeout, currentToken, loadStream]);
 
   const handleVideoError = useCallback(() => {
     const el = videoRef.current;
@@ -705,27 +864,25 @@ export function WatchPage() {
     const t = el && !Number.isNaN(el.currentTime) && el.currentTime > 0 ? el.currentTime : 0;
     lastPlaybackTimeRef.current = t > 0 ? t : lastPlaybackTimeRef.current;
 
-    const ep = currentEpisode;
+    const ep = currentToken;
 
     autoReconnectAttemptRef.current += 1;
     const n = autoReconnectAttemptRef.current;
 
     if (n <= MAX_AUTO_RECONNECT) {
-      const delayMs = n === 1 ? 0 : Math.min(1000 * 2 ** (n - 2), 8000);
+      // Give an in-flight transcode job a chance to produce seg-0 instead of
+      // killing it instantly in a restart loop.
+      const delayMs = Math.min(1500 * 2 ** (n - 1), 8000);
       clearReconnectTimeout();
       setPlayUrl("");
       setPlaybackError(null);
       const run = () => {
-        void loadStream(ep.toString(), t > 0 ? { resumeFrom: t } : undefined);
+        void loadStream(ep, t > 0 ? { resumeFrom: t } : undefined);
       };
-      if (delayMs === 0) {
+      reconnectTimeoutRef.current = setTimeout(() => {
+        reconnectTimeoutRef.current = null;
         run();
-      } else {
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectTimeoutRef.current = null;
-          run();
-        }, delayMs);
-      }
+      }, delayMs);
       return;
     }
 
@@ -733,7 +890,7 @@ export function WatchPage() {
     setPlaybackError(
       "Stream interrupted (e.g. network lost or server error). Reconnect automatically failed; try again or check your connection."
     );
-  }, [clearReconnectTimeout, currentEpisode, loadStream]);
+  }, [clearReconnectTimeout, currentToken, loadStream]);
 
   useEffect(() => {
     return () => {
@@ -807,6 +964,17 @@ export function WatchPage() {
     episode.title.native ??
     "Unknown";
 
+  const viewsCount = showDetails?.views ?? showDetails?.viewerCount ?? null;
+  const headerLabel = isLiveKind
+    ? kind === "live"
+      ? viewsCount != null
+        ? `${displayName} · LIVE · ${viewsCount >= 1000 ? `${(viewsCount / 1000).toFixed(1).replace(/\.0$/, "")}K` : viewsCount} watching`
+        : `${displayName} · LIVE`
+      : viewsCount != null && viewsCount > 0
+        ? `${displayName} · ${viewsCount >= 1000 ? `${(viewsCount / 1000).toFixed(1).replace(/\.0$/, "")}K` : viewsCount} views`
+        : displayName
+    : displayName;
+
   return (
     <div className="flex h-full min-h-0 w-full flex-1 flex-col lg:flex-row">
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -818,7 +986,9 @@ export function WatchPage() {
           streamError={error}
           playbackError={playbackError}
           displayName={displayName}
+          headerLabel={headerLabel}
           isDub={playbackMode === "dub"}
+          hideModeBadge={isLiveKind}
           showLoading={showLoading}
           hasShowDetails={Boolean(showDetails)}
           showError={showError}
@@ -837,14 +1007,16 @@ export function WatchPage() {
           onError={handleVideoError}
         />
       </div>
-      <WatchEpisodeSidebar
-        episodes={sidebarEpisodes}
-        currentEpisode={currentEpisode}
-        currentMode={playbackMode}
-        loading={showLoading}
-        selecting={loadingEpisode}
-        onSelectEpisode={onSidebarSelect}
-      />
+      {isLiveKind ? null : (
+        <WatchEpisodeSidebar
+          episodes={sidebarEpisodes}
+          currentEpisode={currentEpisode}
+          currentMode={playbackMode}
+          loading={showLoading}
+          selecting={loadingEpisode}
+          onSelectEpisode={onSidebarSelect}
+        />
+      )}
     </div>
   );
 }

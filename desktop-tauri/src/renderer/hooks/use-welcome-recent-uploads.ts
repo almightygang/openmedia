@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-import { Episode } from "@/shared/types";
+import { Episode, StreamProvider } from "@/shared/types";
 
-export function useWelcomeRecentlyUploaded(pageSize: number) {
+export function useWelcomeRecentlyUploaded(pageSize: number, provider?: StreamProvider) {
   const [recentUploads, setRecentUploads] = useState<Episode[]>([]);
   const [recentUploadsLoading, setRecentUploadsLoading] = useState(true);
 
@@ -10,7 +10,7 @@ export function useWelcomeRecentlyUploaded(pageSize: number) {
     let cancelled = false;
     setRecentUploadsLoading(true);
     window.streamProvider
-      .getRecentUploads(1, pageSize)
+      .getRecentUploads(1, pageSize, provider)
       .then(
         (episodes: Episode[]) => {
           if (cancelled) return;
@@ -26,7 +26,7 @@ export function useWelcomeRecentlyUploaded(pageSize: number) {
     return () => {
       cancelled = true;
     };
-  }, [pageSize]);
+  }, [pageSize, provider]);
 
   return { recentUploads, recentUploadsLoading };
 }
