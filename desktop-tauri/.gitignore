@@ -1,0 +1,13 @@
+# deps
+node_modules/
+# build outputs
+dist/
+src-tauri/target/
+# ffmpeg sidecars are fetched via `npm run download-ffmpeg`, not committed
+src-tauri/binaries/ffmpeg-*
+!src-tauri/binaries/.gitkeep
+# tauri generated schemas
+src-tauri/gen/schemas/
+# logs / editor
+*.log
+.DS_Store
